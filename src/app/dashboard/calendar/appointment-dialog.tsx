@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,6 +17,7 @@ import { createAppointment } from "./actions";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { normalizePhone } from "@/lib/phone";
 
 interface Patient {
   id: string;
@@ -56,9 +57,12 @@ export function AppointmentDialog({
   const [priceOverride, setPriceOverride] = useState("");
   const [loading, setLoading] = useState(false);
   const [patientSearch, setPatientSearch] = useState("");
+  const [showAddPatient, setShowAddPatient] = useState(false);
+  const [newPatientName, setNewPatientName] = useState("");
+  const [newPatientPhone, setNewPatientPhone] = useState("");
 
   // Reset form when dialog opens
-  useMemo(() => {
+  useEffect(() => {
     if (open) {
       if (prefilledDate) {
         const d = new Date(prefilledDate);
@@ -77,6 +81,9 @@ export function AppointmentDialog({
       setNotes("");
       setPriceOverride("");
       setPatientSearch("");
+      setShowAddPatient(false);
+      setNewPatientName("");
+      setNewPatientPhone("");
     }
   }, [open, prefilledDate]);
 
@@ -85,8 +92,16 @@ export function AppointmentDialog({
     (t) => t.id === treatmentTypeId
   );
 
+  // Show new patient preview if adding new patient is complete
+  const newPatientPreview = !showAddPatient && newPatientName.trim() && newPatientPhone.trim()
+    ? { full_name: newPatientName.trim(), phone: normalizePhone(newPatientPhone), discount_percent: 0 }
+    : null;
+
   // Auto-apply patient discount when patient or treatment selection changes
-  const discount = selectedPatient?.discount_percent ?? 0;
+  const currentPatient = selectedPatient || (showAddPatient && newPatientName.trim() && newPatientPhone.trim()
+    ? { discount_percent: 0 }
+    : null) || newPatientPreview;
+  const discount = currentPatient?.discount_percent ?? 0;
   const basePrice = selectedTreatment?.price ?? 0;
   const discountedPrice = discount > 0
     ? Math.round(basePrice * (1 - discount / 100) * 100) / 100
@@ -102,8 +117,41 @@ export function AppointmentDialog({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!patientId || !treatmentTypeId || !date || !time) {
+    if (!treatmentTypeId || !date || !time) {
       toast.error("נא למלא את כל השדות");
+      return;
+    }
+
+    let finalPatientId = patientId;
+
+    // Create new patient if needed
+    if (showAddPatient) {
+      if (!newPatientName.trim() || !newPatientPhone.trim()) {
+        toast.error("נא למלא שם וטלפון למטופל החדש");
+        return;
+      }
+
+      try {
+        const supabase = createClient();
+        const { data: newPatient, error } = await supabase
+          .from("patients")
+          .insert({
+            full_name: newPatientName.trim(),
+            phone: normalizePhone(newPatientPhone),
+          })
+          .select("id")
+          .single();
+
+        if (error) throw error;
+        finalPatientId = newPatient.id;
+      } catch {
+        toast.error("שגיאה ביצירת מטופל חדש");
+        return;
+      }
+    }
+
+    if (!finalPatientId) {
+      toast.error("נא לבחור מטופל");
       return;
     }
 
@@ -181,7 +229,7 @@ export function AppointmentDialog({
           : null;
 
       await createAppointment({
-        patient_id: patientId,
+        patient_id: finalPatientId,
         treatment_type_id: treatmentTypeId,
         starts_at: startsAt.toISOString(),
         ends_at: endsAt.toISOString(),
@@ -210,13 +258,16 @@ export function AppointmentDialog({
           {/* Patient selection */}
           <div className="flex flex-col gap-2">
             <Label>מטופל/ת *</Label>
-            {selectedPatient ? (
+            {selectedPatient || newPatientPreview ? (
               <div className="flex items-center justify-between p-2.5 rounded-lg border bg-muted/30">
                 <span className="text-sm font-medium">
-                  {selectedPatient.full_name}{" "}
+                  {(selectedPatient || newPatientPreview)?.full_name}{" "}
                   <span className="text-muted-foreground" dir="ltr">
-                    ({selectedPatient.phone})
+                    ({(selectedPatient || newPatientPreview)?.phone})
                   </span>
+                  {newPatientPreview && (
+                    <span className="text-xs text-primary ml-2">(חדש)</span>
+                  )}
                 </span>
                 <Button
                   type="button"
@@ -225,6 +276,9 @@ export function AppointmentDialog({
                   onClick={() => {
                     setPatientId("");
                     setPatientSearch("");
+                    setShowAddPatient(false);
+                    setNewPatientName("");
+                    setNewPatientPhone("");
                   }}
                 >
                   שנה
@@ -237,29 +291,82 @@ export function AppointmentDialog({
                   value={patientSearch}
                   onChange={(e) => setPatientSearch(e.target.value)}
                 />
-                <ScrollArea className="max-h-36 rounded-lg border">
-                  {filteredPatients.length === 0 ? (
-                    <div className="p-3 text-sm text-muted-foreground text-center">
-                      לא נמצאו מטופלים
-                    </div>
-                  ) : (
-                    filteredPatients.map((p) => (
-                      <button
-                        key={p.id}
+                {showAddPatient ? (
+                  <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-medium">מטופל חדש</Label>
+                      <Button
                         type="button"
-                        className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted transition-colors text-start"
-                        onClick={() => setPatientId(p.id)}
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setShowAddPatient(false);
+                          setNewPatientName("");
+                          setNewPatientPhone("");
+                        }}
                       >
-                        <span>
-                          {p.full_name}{" "}
-                          <span className="text-muted-foreground" dir="ltr">
-                            ({p.phone})
+                        ביטול
+                      </Button>
+                    </div>
+                    <div className="space-y-2">
+                      <Input
+                        placeholder="שם מלא"
+                        value={newPatientName}
+                        onChange={(e) => setNewPatientName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                          }
+                        }}
+                      />
+                      <Input
+                        placeholder="טלפון"
+                        value={newPatientPhone}
+                        onChange={(e) => setNewPatientPhone(e.target.value)}
+                        dir="ltr"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <ScrollArea className="max-h-36 rounded-lg border">
+                    {filteredPatients.length === 0 ? (
+                      <div className="p-3 text-center">
+                        <p className="text-sm text-muted-foreground mb-2">
+                          לא נמצאו מטופלים
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowAddPatient(true)}
+                        >
+                          הוסף מטופל חדש
+                        </Button>
+                      </div>
+                    ) : (
+                      filteredPatients.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted transition-colors text-start"
+                          onClick={() => setPatientId(p.id)}
+                        >
+                          <span>
+                            {p.full_name}{" "}
+                            <span className="text-muted-foreground" dir="ltr">
+                              ({p.phone})
+                            </span>
                           </span>
-                        </span>
-                      </button>
-                    ))
-                  )}
-                </ScrollArea>
+                        </button>
+                      ))
+                    )}
+                  </ScrollArea>
+                )}
               </>
             )}
           </div>
@@ -342,6 +449,11 @@ export function AppointmentDialog({
                   value={priceOverride}
                   onChange={(e) => setPriceOverride(e.target.value)}
                   dir="ltr"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                    }
+                  }}
                 />
                 <p className="text-xs text-muted-foreground">
                   {discount > 0
@@ -359,6 +471,11 @@ export function AppointmentDialog({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={2}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                }
+              }}
             />
           </div>
 
