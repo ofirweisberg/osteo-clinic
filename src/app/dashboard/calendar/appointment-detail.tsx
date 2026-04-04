@@ -4,14 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Clock,
   User,
@@ -24,11 +17,14 @@ import {
   Save,
   History,
   Pencil,
+  X,
 } from "lucide-react";
-import { updateAppointmentStatus, deleteAppointment } from "./actions";
+import { Input } from "@/components/ui/input";
+import { updateAppointmentStatus, deleteAppointment, updateAppointmentPrice } from "./actions";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import Link from "next/link";
+import { formatPhoneDisplay } from "@/lib/phone";
 
 interface Appointment {
   id: string;
@@ -39,6 +35,7 @@ interface Appointment {
   status: string;
   source: string;
   notes: string | null;
+  price: number | null;
   patients: { id: string; full_name: string; phone: string };
   treatment_types: {
     id: string;
@@ -109,6 +106,8 @@ export function AppointmentDetail({
   const [patientHistory, setPatientHistory] = useState<VisitLog[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [editingPrice, setEditingPrice] = useState(false);
+  const [priceValue, setPriceValue] = useState("");
 
   // Load visit log for this appointment + patient history
   const loadData = useCallback(async () => {
@@ -196,6 +195,26 @@ export function AppointmentDetail({
 
   const statusInfo = STATUS_MAP[appointment.status] ?? STATUS_MAP.pending;
 
+  function startEditPrice() {
+    const effectivePrice = appointment!.price ?? appointment!.treatment_types?.price ?? 0;
+    setPriceValue(String(effectivePrice));
+    setEditingPrice(true);
+  }
+
+  async function handleSavePrice() {
+    const treatmentPrice = appointment!.treatment_types?.price ?? 0;
+    const newPrice = priceValue !== "" ? parseFloat(priceValue) : null;
+    const priceToSave = newPrice === treatmentPrice ? null : newPrice;
+    try {
+      await updateAppointmentPrice(appointment!.id, priceToSave);
+      toast.success("המחיר עודכן");
+      setEditingPrice(false);
+      onUpdated();
+    } catch {
+      toast.error("שגיאה בעדכון מחיר");
+    }
+  }
+
   async function handleStatusChange(status: string) {
     try {
       await updateAppointmentStatus(appointment!.id, status);
@@ -219,15 +238,17 @@ export function AppointmentDetail({
     }
   }
 
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="left" className="w-[420px] flex flex-col">
-        <SheetHeader>
-          <SheetTitle>פרטי תור</SheetTitle>
-        </SheetHeader>
+  if (!open) return null;
 
-        <ScrollArea className="flex-1 mt-4">
-          <div className="flex flex-col gap-4 pe-4">
+  return (
+    <div className="border-t bg-card shrink-0 flex flex-col" style={{ height: "66vh" }}>
+      <div className="flex items-center justify-between px-4 py-2 border-b shrink-0">
+        <h3 className="font-medium text-sm">פרטי תור</h3>
+        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenChange(false)}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+      <div className="flex flex-col gap-4 p-4 overflow-auto flex-1">
             {/* Status badge */}
             <div className="flex items-center gap-2">
               <Badge variant={statusInfo.variant}>{statusInfo.label}</Badge>
@@ -251,7 +272,7 @@ export function AppointmentDetail({
               </div>
               <div className="flex items-center gap-2 text-sm" dir="ltr">
                 <Phone className="h-4 w-4 text-muted-foreground" />
-                <span>{appointment.patients?.phone}</span>
+                <span>{formatPhoneDisplay(appointment.patients?.phone ?? "")}</span>
               </div>
             </div>
 
@@ -279,8 +300,52 @@ export function AppointmentDetail({
                 </span>
               </div>
               <div className="text-sm text-muted-foreground">
-                {appointment.treatment_types?.duration_minutes} דקות ·{" "}
-                {appointment.treatment_types?.price} ₪
+                {appointment.treatment_types?.duration_minutes} דקות
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">מחיר:</span>
+                {editingPrice ? (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={priceValue}
+                      onChange={(e) => setPriceValue(e.target.value)}
+                      className="w-24 h-7 text-sm"
+                      dir="ltr"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleSavePrice();
+                        if (e.key === "Escape") setEditingPrice(false);
+                      }}
+                    />
+                    <span className="text-muted-foreground">₪</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2"
+                      onClick={handleSavePrice}
+                    >
+                      <Save className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ) : (
+                  <button
+                    className="flex items-center gap-1 hover:text-primary transition-colors"
+                    onClick={startEditPrice}
+                  >
+                    <span className="font-medium">
+                      {appointment.price ?? appointment.treatment_types?.price} ₪
+                    </span>
+                    {appointment.price != null &&
+                      appointment.price !== appointment.treatment_types?.price && (
+                        <span className="text-xs text-muted-foreground">
+                          (במקום {appointment.treatment_types?.price} ₪)
+                        </span>
+                      )}
+                    <Pencil className="h-3 w-3 text-muted-foreground" />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -452,9 +517,7 @@ export function AppointmentDetail({
               <Trash2 className="h-3 w-3 me-1" />
               מחק תור
             </Button>
-          </div>
-        </ScrollArea>
-      </SheetContent>
-    </Sheet>
+      </div>
+    </div>
   );
 }

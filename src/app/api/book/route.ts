@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendWhatsAppMessage } from "@/lib/whatsapp/client";
 import { bookingConfirmationMessage } from "@/lib/whatsapp/messages";
+import { normalizePhone } from "@/lib/phone";
 
 // Use service role for public booking (bypasses RLS for reads, anon policies handle inserts)
 function getServiceClient() {
@@ -34,13 +35,14 @@ export async function POST(request: Request) {
     );
   }
 
+  const normalizedPhone = normalizePhone(phone);
   const supabase = getServiceClient();
 
   // Find or create patient
   const { data: existingPatients, error: searchError } = await supabase
     .from("patients")
     .select("id")
-    .eq("phone", phone)
+    .eq("phone", normalizedPhone)
     .limit(1);
 
   if (searchError) {
@@ -54,7 +56,7 @@ export async function POST(request: Request) {
   } else {
     const { data: newPatient, error: patientError } = await supabase
       .from("patients")
-      .insert({ full_name, phone })
+      .insert({ full_name, phone: normalizedPhone })
       .select("id")
       .single();
 

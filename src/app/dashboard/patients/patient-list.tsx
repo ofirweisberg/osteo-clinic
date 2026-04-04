@@ -13,10 +13,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { Plus, Search, Pencil, Trash2 } from "lucide-react";
 import { PatientDialog } from "./patient-dialog";
 import { deletePatient } from "./actions";
 import { toast } from "sonner";
+import { formatPhoneDisplay } from "@/lib/phone";
 
 interface Patient {
   id: string;
@@ -26,6 +28,7 @@ interface Patient {
   date_of_birth: string | null;
   address: string | null;
   notes: string | null;
+  discount_percent: number;
   created_at: string;
   updated_at: string;
 }
@@ -76,7 +79,8 @@ export function PatientList({
         <h2 className="text-2xl font-bold">מטופלים</h2>
         <Button onClick={handleAdd}>
           <Plus className="h-4 w-4 me-2" />
-          מטופל חדש
+          <span className="hidden sm:inline">מטופל חדש</span>
+          <span className="sm:hidden">חדש</span>
         </Button>
       </div>
 
@@ -90,7 +94,8 @@ export function PatientList({
         />
       </div>
 
-      <div className="rounded-lg border bg-card">
+      {/* Desktop table */}
+      <div className="rounded-lg border bg-card hidden md:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -120,7 +125,7 @@ export function PatientList({
                     </Link>
                   </TableCell>
                   <TableCell dir="ltr" className="text-start">
-                    {patient.phone}
+                    {formatPhoneDisplay(patient.phone)}
                   </TableCell>
                   <TableCell dir="ltr" className="text-start">
                     {patient.email ?? "—"}
@@ -151,6 +156,63 @@ export function PatientList({
             )}
           </TableBody>
         </Table>
+      </div>
+
+      {/* Mobile card list */}
+      <div className="flex flex-col gap-3 md:hidden">
+        {patients.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground rounded-lg border bg-card">
+            {search ? "לא נמצאו תוצאות" : "אין מטופלים עדיין. הוסיפי מטופל חדש!"}
+          </div>
+        ) : (
+          patients.map((patient) => (
+            <div key={patient.id} className="rounded-lg border bg-card p-4">
+              <div className="flex items-start justify-between">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/dashboard/patients/${patient.id}`}
+                      className="font-medium hover:underline text-base"
+                    >
+                      {patient.full_name}
+                    </Link>
+                    {patient.discount_percent > 0 && (
+                      <Badge variant="secondary" className="text-xs">
+                        {patient.discount_percent}%
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="text-sm text-muted-foreground mt-1" dir="ltr">
+                    {formatPhoneDisplay(patient.phone)}
+                  </div>
+                  {patient.email && (
+                    <div className="text-sm text-muted-foreground truncate" dir="ltr">
+                      {patient.email}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleEdit(patient)}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() =>
+                      handleDelete(patient.id, patient.full_name)
+                    }
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
       </div>
 
       <PatientDialog

@@ -23,6 +23,7 @@ export async function createAppointment(data: {
   ends_at: string;
   notes?: string;
   source?: string;
+  price?: number | null;
 }) {
   const supabase = await createClient();
   const { error } = await supabase.from("appointments").insert({
@@ -33,6 +34,7 @@ export async function createAppointment(data: {
     notes: data.notes || null,
     source: data.source || "manual",
     status: "confirmed",
+    price: data.price ?? null,
   });
   if (error) throw error;
   revalidatePath("/dashboard/calendar");
@@ -43,6 +45,16 @@ export async function updateAppointmentStatus(id: string, status: string) {
   const { error } = await supabase
     .from("appointments")
     .update({ status })
+    .eq("id", id);
+  if (error) throw error;
+  revalidatePath("/dashboard/calendar");
+}
+
+export async function updateAppointmentPrice(id: string, price: number | null) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("appointments")
+    .update({ price })
     .eq("id", id);
   if (error) throw error;
   revalidatePath("/dashboard/calendar");

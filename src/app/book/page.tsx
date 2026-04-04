@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle, Calendar, Clock, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
+import { formatPhoneDisplay } from "@/lib/phone";
 
 interface TreatmentType {
   id: string;
@@ -73,6 +74,9 @@ export default function BookPage() {
   const [existingAppointments, setExistingAppointments] = useState<
     { starts_at: string; ends_at: string }[]
   >([]);
+  const [scheduleBlocks, setScheduleBlocks] = useState<
+    { block_type: string; starts_at: string | null; ends_at: string | null; day_of_week: number | null; start_time: string | null; end_time: string | null; exception_dates: string[] }[]
+  >([]);
 
   // Form state
   const [fullName, setFullName] = useState("");
@@ -84,16 +88,18 @@ export default function BookPage() {
 
   useEffect(() => {
     async function load() {
-      const [settingsRes, treatmentsRes] = await Promise.all([
+      const [settingsRes, treatmentsRes, blocksRes] = await Promise.all([
         supabase.from("practice_settings").select("*").single(),
         supabase
           .from("treatment_types")
           .select("*")
           .eq("is_active", true)
           .order("name"),
+        supabase.from("schedule_blocks").select("*"),
       ]);
       setSettings(settingsRes.data as PracticeSettings);
       setTreatments(treatmentsRes.data ?? []);
+      setScheduleBlocks(blocksRes.data ?? []);
       setLoading(false);
     }
     load();
@@ -161,14 +167,36 @@ export default function BookPage() {
       const slotEnd = new Date(slotStart);
       slotEnd.setMinutes(slotEnd.getMinutes() + duration);
 
-      // Check if slot overlaps with existing appointments
+      // Check if slot overlaps with existing appointments (including 15-min gap)
+      const GAP_MS = 15 * 60 * 1000;
       const overlaps = existingAppointments.some((appt) => {
         const apptStart = new Date(appt.starts_at).getTime();
         const apptEnd = new Date(appt.ends_at).getTime();
-        return slotStart.getTime() < apptEnd && slotEnd.getTime() > apptStart;
+        return slotStart.getTime() < apptEnd + GAP_MS && slotEnd.getTime() + GAP_MS > apptStart;
       });
 
-      if (!overlaps) {
+      // Check if slot overlaps with schedule blocks
+      const blocked = scheduleBlocks.some((block) => {
+        if (block.block_type === "one_time" && block.starts_at && block.ends_at) {
+          const bStart = new Date(block.starts_at).getTime();
+          const bEnd = new Date(block.ends_at).getTime();
+          return slotStart.getTime() < bEnd && slotEnd.getTime() > bStart;
+        }
+        if (block.block_type === "recurring" && block.day_of_week === dayOfWeek && block.start_time && block.end_time) {
+          const exceptions: string[] = (block.exception_dates as string[]) ?? [];
+          if (exceptions.includes(selectedDate)) return false;
+          const [bsh, bsm] = block.start_time.split(":").map(Number);
+          const [beh, bem] = block.end_time.split(":").map(Number);
+          const blockStartMin = bsh * 60 + bsm;
+          const blockEndMin = beh * 60 + bem;
+          const slotStartMin = slotStart.getHours() * 60 + slotStart.getMinutes();
+          const slotEndMin = slotEnd.getHours() * 60 + slotEnd.getMinutes();
+          return slotStartMin < blockEndMin && slotEndMin > blockStartMin;
+        }
+        return false;
+      });
+
+      if (!overlaps && !blocked) {
         const h = Math.floor(minutes / 60);
         const m = minutes % 60;
         slots.push({
@@ -436,7 +464,7 @@ export default function BookPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">טלפון:</span>
-                <span dir="ltr">{phone}</span>
+                <span dir="ltr">{formatPhoneDisplay(phone)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">טיפול:</span>

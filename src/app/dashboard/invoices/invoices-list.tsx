@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { createInvoice, updateInvoiceStatus, deleteInvoice } from "./actions";
 import { toast } from "sonner";
+import { formatPhoneDisplay } from "@/lib/phone";
 
 interface Invoice {
   id: string;
@@ -198,7 +199,8 @@ export function InvoicesList({
         ))}
       </div>
 
-      <div className="rounded-lg border bg-card">
+      {/* Desktop table */}
+      <div className="rounded-lg border bg-card hidden md:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -293,6 +295,84 @@ export function InvoicesList({
             )}
           </TableBody>
         </Table>
+      </div>
+
+      {/* Mobile card list */}
+      <div className="flex flex-col gap-3 md:hidden">
+        {filteredInvoices.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground rounded-lg border bg-card">
+            אין חשבוניות
+          </div>
+        ) : (
+          filteredInvoices.map((invoice) => {
+            const statusInfo =
+              STATUS_MAP[invoice.status] ?? STATUS_MAP.draft;
+            return (
+              <div key={invoice.id} className="rounded-lg border bg-card p-4">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium">
+                        {invoice.patients?.full_name}
+                      </span>
+                      <Badge variant={statusInfo.variant} className="text-xs">
+                        {statusInfo.label}
+                      </Badge>
+                    </div>
+                    <div className="text-lg font-bold">
+                      {invoice.amount.toLocaleString()} ₪
+                    </div>
+                    <div className="text-sm text-muted-foreground mt-1">
+                      חשבונית #{invoice.invoice_number} · {formatDate(invoice.issued_at)}
+                    </div>
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger>
+                      <Button variant="ghost" size="icon">
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        onClick={() => handleDownloadPdf(invoice)}
+                      >
+                        <FileDown className="h-4 w-4 me-2" />
+                        הורד PDF
+                      </DropdownMenuItem>
+                      {invoice.status !== "sent" && (
+                        <DropdownMenuItem
+                          onClick={() =>
+                            handleStatusChange(invoice.id, "sent")
+                          }
+                        >
+                          <Send className="h-4 w-4 me-2" />
+                          סמן כנשלח
+                        </DropdownMenuItem>
+                      )}
+                      {invoice.status !== "paid" && (
+                        <DropdownMenuItem
+                          onClick={() =>
+                            handleStatusChange(invoice.id, "paid")
+                          }
+                        >
+                          <CheckCircle className="h-4 w-4 me-2" />
+                          סמן כשולם
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem
+                        onClick={() => handleDelete(invoice.id)}
+                        className="text-destructive"
+                      >
+                        <Trash2 className="h-4 w-4 me-2" />
+                        מחק
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
 
       {/* New invoice dialog */}
@@ -424,7 +504,7 @@ function generateInvoicePdf(
           ${settings?.practice_name ? `<div><strong>${settings.practice_name}</strong></div>` : ""}
           ${settings?.practitioner_name ? `<div>${settings.practitioner_name}</div>` : ""}
           ${settings?.address ? `<div>${settings.address}</div>` : ""}
-          ${settings?.phone ? `<div dir="ltr">${settings.phone}</div>` : ""}
+          ${settings?.phone ? `<div dir="ltr">${formatPhoneDisplay(settings.phone)}</div>` : ""}
         </div>
       </div>
 
@@ -438,7 +518,7 @@ function generateInvoicePdf(
         </div>
         <div class="detail-row">
           <span class="detail-label">טלפון:</span>
-          <span class="detail-value" dir="ltr">${invoice.patients?.phone ?? ""}</span>
+          <span class="detail-value" dir="ltr">${formatPhoneDisplay(invoice.patients?.phone ?? "")}</span>
         </div>
       </div>
 

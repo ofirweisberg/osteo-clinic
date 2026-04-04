@@ -7,7 +7,7 @@ export default async function CalendarPage() {
   const [patientsRes, treatmentsRes, settingsRes] = await Promise.all([
     supabase
       .from("patients")
-      .select("id, full_name, phone")
+      .select("id, full_name, phone, discount_percent")
       .order("full_name"),
     supabase
       .from("treatment_types")

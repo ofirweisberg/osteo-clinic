@@ -14,6 +14,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Check } from "lucide-react";
 import { createAppointment } from "./actions";
+import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -21,6 +22,7 @@ interface Patient {
   id: string;
   full_name: string;
   phone: string;
+  discount_percent: number;
 }
 
 interface TreatmentType {
@@ -51,6 +53,7 @@ export function AppointmentDialog({
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [notes, setNotes] = useState("");
+  const [priceOverride, setPriceOverride] = useState("");
   const [loading, setLoading] = useState(false);
   const [patientSearch, setPatientSearch] = useState("");
 
@@ -72,6 +75,7 @@ export function AppointmentDialog({
       setPatientId("");
       setTreatmentTypeId("");
       setNotes("");
+      setPriceOverride("");
       setPatientSearch("");
     }
   }, [open, prefilledDate]);
@@ -80,6 +84,13 @@ export function AppointmentDialog({
   const selectedTreatment = treatmentTypes.find(
     (t) => t.id === treatmentTypeId
   );
+
+  // Auto-apply patient discount when patient or treatment selection changes
+  const discount = selectedPatient?.discount_percent ?? 0;
+  const basePrice = selectedTreatment?.price ?? 0;
+  const discountedPrice = discount > 0
+    ? Math.round(basePrice * (1 - discount / 100) * 100) / 100
+    : basePrice;
 
   const filteredPatients = patientSearch
     ? patients.filter(
@@ -114,12 +125,68 @@ export function AppointmentDialog({
         endsAt.getMinutes() + (selectedTreatment?.duration_minutes ?? 60)
       );
 
+      // Check for overlapping appointments (with 15-min gap)
+      const GAP_MS = 15 * 60 * 1000;
+      const checkStart = new Date(startsAt.getTime() - GAP_MS);
+      const checkEnd = new Date(endsAt.getTime() + GAP_MS);
+
+      const supabase = createClient();
+      const { data: conflicts } = await supabase
+        .from("appointments")
+        .select("id, starts_at, ends_at")
+        .neq("status", "cancelled")
+        .lt("starts_at", checkEnd.toISOString())
+        .gt("ends_at", checkStart.toISOString());
+
+      if (conflicts && conflicts.length > 0) {
+        toast.error("יש תור חופף בטווח הזמן הזה (כולל 15 דקות הפרש)");
+        setLoading(false);
+        return;
+      }
+
+      // Check for schedule blocks
+      const { data: blockConflicts } = await supabase
+        .from("schedule_blocks")
+        .select("*");
+
+      const dayOfWeek = startsAt.getDay();
+      const hasBlockConflict = (blockConflicts ?? []).some((block: { block_type: string; starts_at: string | null; ends_at: string | null; day_of_week: number | null; start_time: string | null; end_time: string | null }) => {
+        if (block.block_type === "one_time" && block.starts_at && block.ends_at) {
+          const bStart = new Date(block.starts_at).getTime();
+          const bEnd = new Date(block.ends_at).getTime();
+          return startsAt.getTime() < bEnd && endsAt.getTime() > bStart;
+        }
+        if (block.block_type === "recurring" && block.day_of_week === dayOfWeek && block.start_time && block.end_time) {
+          const [bsh, bsm] = block.start_time.split(":").map(Number);
+          const [beh, bem] = block.end_time.split(":").map(Number);
+          const blockStartMin = bsh * 60 + bsm;
+          const blockEndMin = beh * 60 + bem;
+          const slotStartMin = startsAt.getHours() * 60 + startsAt.getMinutes();
+          const slotEndMin = endsAt.getHours() * 60 + endsAt.getMinutes();
+          return slotStartMin < blockEndMin && slotEndMin > blockStartMin;
+        }
+        return false;
+      });
+
+      if (hasBlockConflict) {
+        toast.error("הזמן חסום ביומן. נא לבחור זמן אחר.");
+        setLoading(false);
+        return;
+      }
+
+      const price = priceOverride !== ""
+        ? parseFloat(priceOverride)
+        : discount > 0
+          ? discountedPrice
+          : null;
+
       await createAppointment({
         patient_id: patientId,
         treatment_type_id: treatmentTypeId,
         starts_at: startsAt.toISOString(),
         ends_at: endsAt.toISOString(),
         notes: notes || undefined,
+        price,
       });
 
       toast.success("התור נקבע בהצלחה");
@@ -256,10 +323,33 @@ export function AppointmentDialog({
           </div>
 
           {selectedTreatment && (
-            <p className="text-sm text-muted-foreground">
-              משך הטיפול: {selectedTreatment.duration_minutes} דקות · מחיר:{" "}
-              {selectedTreatment.price} ₪
-            </p>
+            <div className="flex flex-col gap-2">
+              <p className="text-sm text-muted-foreground">
+                משך הטיפול: {selectedTreatment.duration_minutes} דקות · מחיר
+                בסיס: {selectedTreatment.price} ₪
+                {discount > 0 && (
+                  <span className="text-primary font-medium">
+                    {" "}· הנחת מטופל: {discount}% → {discountedPrice} ₪
+                  </span>
+                )}
+              </p>
+              <div className="flex flex-col gap-1">
+                <Label>מחיר (₪)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder={`${discountedPrice}`}
+                  value={priceOverride}
+                  onChange={(e) => setPriceOverride(e.target.value)}
+                  dir="ltr"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {discount > 0
+                    ? "המחיר כולל הנחת מטופל. ניתן לשנות ידנית."
+                    : "השאירו ריק לשימוש במחיר ברירת המחדל"}
+                </p>
+              </div>
+            </div>
           )}
 
           {/* Notes */}

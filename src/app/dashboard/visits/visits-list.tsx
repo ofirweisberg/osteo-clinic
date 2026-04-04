@@ -137,23 +137,22 @@ export function VisitsList({
               {pendingAppointments.map((appt) => (
                 <div
                   key={appt.id}
-                  className="flex items-center justify-between p-3 rounded-lg border bg-white"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-lg border bg-white"
                 >
-                  <div>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-0">
                     <span className="font-medium">
                       {appt.patients?.full_name}
                     </span>
-                    <span className="text-muted-foreground text-sm mx-2">·</span>
+                    <span className="text-muted-foreground text-sm mx-2 hidden sm:inline">·</span>
                     <span className="text-sm text-muted-foreground">
                       {appt.treatment_types?.name}
-                    </span>
-                    <span className="text-muted-foreground text-sm mx-2">·</span>
-                    <span className="text-sm text-muted-foreground">
+                      <span className="text-muted-foreground text-sm mx-2">·</span>
                       {formatDate(appt.starts_at)}
                     </span>
                   </div>
                   <Button
                     size="sm"
+                    className="self-end sm:self-auto"
                     onClick={() => {
                       setSelectedAppointment(appt);
                       setNotes("");
@@ -187,8 +186,8 @@ export function VisitsList({
             <Card key={visit.id}>
               <CardContent className="p-4">
                 <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
                       <span className="font-medium">
                         {visit.patients?.full_name}
                       </span>

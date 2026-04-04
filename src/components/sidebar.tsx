@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -10,10 +11,16 @@ import {
   Settings,
   LogOut,
   LayoutDashboard,
+  Menu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { logout } from "@/app/login/actions";
 import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 const navItems = [
   { href: "/dashboard", label: "לוח בקרה", icon: LayoutDashboard },
@@ -24,11 +31,11 @@ const navItems = [
   { href: "/dashboard/settings", label: "הגדרות", icon: Settings },
 ];
 
-export function Sidebar({ userEmail }: { userEmail: string }) {
+function NavContent({ userEmail, onNavigate }: { userEmail: string; onNavigate?: () => void }) {
   const pathname = usePathname();
 
   return (
-    <aside className="w-64 border-e bg-card flex flex-col">
+    <>
       <div className="p-6 border-b">
         <h1 className="text-lg font-bold">מרפאת אוסטאופתיה</h1>
         <p className="text-xs text-muted-foreground mt-1 truncate" dir="ltr">
@@ -46,6 +53,7 @@ export function Sidebar({ userEmail }: { userEmail: string }) {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors",
                 isActive
@@ -68,6 +76,37 @@ export function Sidebar({ userEmail }: { userEmail: string }) {
           </Button>
         </form>
       </div>
-    </aside>
+    </>
+  );
+}
+
+export function Sidebar({ userEmail }: { userEmail: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      {/* Mobile hamburger button - fixed top bar */}
+      <div className="md:hidden fixed top-0 inset-x-0 z-40 flex items-center gap-3 border-b bg-card px-4 h-14">
+        <Button variant="ghost" size="icon" onClick={() => setOpen(true)}>
+          <Menu className="h-5 w-5" />
+        </Button>
+        <span className="font-bold text-sm">מרפאת אוסטאופתיה</span>
+      </div>
+
+      {/* Mobile drawer */}
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent side="right" className="p-0 w-64" showCloseButton={false}>
+          <SheetTitle className="sr-only">תפריט ניווט</SheetTitle>
+          <div className="flex flex-col h-full">
+            <NavContent userEmail={userEmail} onNavigate={() => setOpen(false)} />
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Desktop sidebar */}
+      <aside className="hidden md:flex w-64 border-e bg-card flex-col shrink-0">
+        <NavContent userEmail={userEmail} />
+      </aside>
+    </>
   );
 }

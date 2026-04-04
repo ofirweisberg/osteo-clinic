@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Pencil } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   createTreatmentType,
+  updateTreatmentType,
   deleteTreatmentType,
   toggleTreatmentType,
 } from "./actions";
@@ -38,18 +39,38 @@ export function TreatmentTypes({
 }) {
   const router = useRouter();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingTreatment, setEditingTreatment] = useState<TreatmentType | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function handleCreate(e: React.FormEvent<HTMLFormElement>) {
+  const isEditing = !!editingTreatment;
+
+  function handleAdd() {
+    setEditingTreatment(null);
+    setDialogOpen(true);
+  }
+
+  function handleEdit(treatment: TreatmentType) {
+    setEditingTreatment(treatment);
+    setDialogOpen(true);
+  }
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     try {
-      await createTreatmentType(new FormData(e.currentTarget));
-      toast.success("סוג טיפול נוסף בהצלחה");
+      const formData = new FormData(e.currentTarget);
+      if (isEditing) {
+        await updateTreatmentType(editingTreatment.id, formData);
+        toast.success("סוג טיפול עודכן בהצלחה");
+      } else {
+        await createTreatmentType(formData);
+        toast.success("סוג טיפול נוסף בהצלחה");
+      }
       setDialogOpen(false);
+      setEditingTreatment(null);
       router.refresh();
     } catch {
-      toast.error("שגיאה בהוספת סוג טיפול");
+      toast.error(isEditing ? "שגיאה בעדכון סוג טיפול" : "שגיאה בהוספת סוג טיפול");
     } finally {
       setLoading(false);
     }
@@ -80,7 +101,7 @@ export function TreatmentTypes({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>סוגי טיפולים</CardTitle>
-          <Button size="sm" onClick={() => setDialogOpen(true)}>
+          <Button size="sm" onClick={handleAdd}>
             <Plus className="h-4 w-4 me-1" />
             הוסף
           </Button>
@@ -119,6 +140,13 @@ export function TreatmentTypes({
                     <Button
                       variant="ghost"
                       size="icon"
+                      onClick={() => handleEdit(t)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       onClick={() => handleDelete(t.id, t.name)}
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
@@ -131,18 +159,31 @@ export function TreatmentTypes({
         </CardContent>
       </Card>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog
+        open={dialogOpen}
+        onOpenChange={(open) => {
+          setDialogOpen(open);
+          if (!open) setEditingTreatment(null);
+        }}
+      >
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>סוג טיפול חדש</DialogTitle>
+            <DialogTitle>
+              {isEditing ? "עריכת סוג טיפול" : "סוג טיפול חדש"}
+            </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+          <form
+            key={editingTreatment?.id ?? "new"}
+            onSubmit={handleSubmit}
+            className="flex flex-col gap-4"
+          >
             <div className="flex flex-col gap-2">
               <Label htmlFor="name">שם הטיפול</Label>
               <Input
                 id="name"
                 name="name"
                 placeholder='למשל "טיפול ראשוני"'
+                defaultValue={editingTreatment?.name ?? ""}
                 required
               />
             </div>
@@ -153,7 +194,7 @@ export function TreatmentTypes({
                   id="duration_minutes"
                   name="duration_minutes"
                   type="number"
-                  defaultValue={60}
+                  defaultValue={editingTreatment?.duration_minutes ?? 60}
                   required
                 />
               </div>
@@ -164,7 +205,7 @@ export function TreatmentTypes({
                   name="price"
                   type="number"
                   step="0.01"
-                  defaultValue={0}
+                  defaultValue={editingTreatment?.price ?? 0}
                   required
                 />
               </div>
@@ -175,7 +216,7 @@ export function TreatmentTypes({
                 id="color"
                 name="color"
                 type="color"
-                defaultValue="#6366f1"
+                defaultValue={editingTreatment?.color ?? "#6366f1"}
                 className="h-10 w-20"
               />
             </div>
@@ -183,12 +224,15 @@ export function TreatmentTypes({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setDialogOpen(false)}
+                onClick={() => {
+                  setDialogOpen(false);
+                  setEditingTreatment(null);
+                }}
               >
                 ביטול
               </Button>
               <Button type="submit" disabled={loading}>
-                {loading ? "שומר..." : "הוסף"}
+                {loading ? "שומר..." : isEditing ? "עדכון" : "הוסף"}
               </Button>
             </div>
           </form>

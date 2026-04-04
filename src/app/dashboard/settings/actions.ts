@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { normalizePhone } from "@/lib/phone";
 
 export async function updatePracticeSettings(formData: FormData) {
   const supabase = await createClient();
@@ -42,7 +43,7 @@ export async function updatePracticeSettings(formData: FormData) {
     .update({
       practice_name: formData.get("practice_name") as string,
       practitioner_name: formData.get("practitioner_name") as string,
-      phone: formData.get("phone") as string,
+      phone: normalizePhone(formData.get("phone") as string),
       address: formData.get("address") as string,
       working_hours: workingHours,
       booking_window_days: parseInt(
@@ -67,6 +68,22 @@ export async function createTreatmentType(formData: FormData) {
     price: parseFloat(formData.get("price") as string),
     color: (formData.get("color") as string) || "#6366f1",
   });
+  if (error) throw error;
+  revalidatePath("/dashboard/settings");
+}
+
+export async function updateTreatmentType(id: string, formData: FormData) {
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("treatment_types")
+    .update({
+      name: formData.get("name") as string,
+      duration_minutes: parseInt(formData.get("duration_minutes") as string),
+      price: parseFloat(formData.get("price") as string),
+      color: (formData.get("color") as string) || "#6366f1",
+    })
+    .eq("id", id);
   if (error) throw error;
   revalidatePath("/dashboard/settings");
 }

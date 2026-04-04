@@ -23,6 +23,7 @@ interface Patient {
   date_of_birth: string | null;
   address: string | null;
   notes: string | null;
+  discount_percent: number;
   created_at: string;
   updated_at: string;
 }
@@ -122,6 +123,19 @@ export function PatientDialog({
               id="address"
               name="address"
               defaultValue={patient?.address ?? ""}
+            />
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="discount_percent">הנחה (%)</Label>
+            <Input
+              id="discount_percent"
+              name="discount_percent"
+              type="number"
+              min={0}
+              max={100}
+              defaultValue={patient?.discount_percent ?? 0}
+              dir="ltr"
             />
           </div>
 
