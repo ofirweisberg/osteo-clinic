@@ -168,6 +168,7 @@ export function WeeklyCalendar({
   const [apptMenuPos, setApptMenuPos] = useState({ x: 0, y: 0 });
   const [apptMenuTarget, setApptMenuTarget] = useState<Appointment | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [detailSize, setDetailSize] = useState<"full" | "half">("full");
   const [selectedAppointment, setSelectedAppointment] =
     useState<Appointment | null>(null);
   const [prefilledDate, setPrefilledDate] = useState<string | null>(null);
@@ -203,6 +204,7 @@ export function WeeklyCalendar({
   }, [currentWeek]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount / week change
     fetchData();
   }, [fetchData]);
 
@@ -219,6 +221,7 @@ export function WeeklyCalendar({
     if (date) {
       const [y, m, d] = date.split("-").map(Number);
       if (y && m && d) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time sync from the URL on mount
         setCurrentWeek(getWeekStart(new Date(y, m - 1, d, 12, 0, 0)));
       }
     }
@@ -256,6 +259,7 @@ export function WeeklyCalendar({
 
   function handleAppointmentClick(appt: Appointment) {
     setSelectedAppointment(appt);
+    setDetailSize("full"); // open full by default; user can shrink to half
     setDetailOpen(true);
 
     requestAnimationFrame(() => {
@@ -700,7 +704,7 @@ export function WeeklyCalendar({
       </div>
 
       {/* Calendar grid — Desktop (full week) */}
-      <div ref={desktopGridRef} className={`border rounded-lg bg-card overflow-auto hidden md:block ${detailOpen ? "flex-1 min-h-0" : "flex-1"}`}>
+      <div ref={desktopGridRef} className={`border rounded-lg bg-card overflow-auto ${detailOpen && detailSize === "full" ? "hidden" : `hidden md:block ${detailOpen ? "flex-1 min-h-0" : "flex-1"}`}`}>
         {/* Day headers */}
         <div className="flex border-b sticky top-0 bg-card z-10">
           <div className="w-16 shrink-0 border-e" />
@@ -745,7 +749,7 @@ export function WeeklyCalendar({
       </div>
 
       {/* Calendar grid — Mobile (single day) */}
-      <div ref={mobileGridRef} className={`border rounded-lg bg-card overflow-auto md:hidden ${detailOpen ? "flex-1 min-h-0" : "flex-1"}`}>
+      <div ref={mobileGridRef} className={`border rounded-lg bg-card overflow-auto ${detailOpen && detailSize === "full" ? "hidden" : `md:hidden ${detailOpen ? "flex-1 min-h-0" : "flex-1"}`}`}>
         <div className="flex relative">
           {/* Hour labels */}
           <div className="w-14 shrink-0 border-e">
@@ -787,6 +791,8 @@ export function WeeklyCalendar({
         onOpenChange={setDetailOpen}
         appointment={selectedAppointment}
         onUpdated={fetchData}
+        size={detailSize}
+        onSizeChange={setDetailSize}
       />
 
       <BlockDialog

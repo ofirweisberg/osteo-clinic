@@ -24,6 +24,8 @@ import {
   Loader2,
   ChevronDown,
   ChevronUp,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -148,11 +150,15 @@ export function AppointmentDetail({
   onOpenChange,
   appointment,
   onUpdated,
+  size = "half",
+  onSizeChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   appointment: Appointment | null;
   onUpdated: () => void;
+  size?: "full" | "half";
+  onSizeChange?: (size: "full" | "half") => void;
 }) {
   const supabase = createClient();
   const [visitLog, setVisitLog] = useState<VisitLog | null>(null);
@@ -541,12 +547,35 @@ export function AppointmentDetail({
   );
 
   return (
-    <div className="border-t bg-card shrink-0 flex flex-col" style={{ height: "66vh" }}>
+    <div
+      className={`border-t bg-card flex flex-col ${
+        size === "full" ? "flex-1 min-h-0" : "shrink-0"
+      }`}
+      style={size === "full" ? undefined : { height: "66vh" }}
+    >
       <div className="flex items-center justify-between px-4 py-2 border-b shrink-0">
         <h3 className="font-medium text-sm">פרטי תור</h3>
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenChange(false)}>
-          <X className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {onSizeChange && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => onSizeChange(size === "full" ? "half" : "full")}
+              aria-label={size === "full" ? "הקטן לחצי מסך" : "הגדל למסך מלא"}
+              title={size === "full" ? "הקטן לחצי מסך" : "הגדל למסך מלא"}
+            >
+              {size === "full" ? (
+                <Minimize2 className="h-4 w-4" />
+              ) : (
+                <Maximize2 className="h-4 w-4" />
+              )}
+            </Button>
+          )}
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenChange(false)}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
       <div className="flex flex-col gap-4 p-4 overflow-auto flex-1">
             {/* Status badge */}
