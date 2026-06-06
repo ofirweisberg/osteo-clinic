@@ -173,6 +173,10 @@ export function WeeklyCalendar({
   const [prefilledDate, setPrefilledDate] = useState<string | null>(null);
   const desktopGridRef = useRef<HTMLDivElement>(null);
   const mobileGridRef = useRef<HTMLDivElement>(null);
+  // Deep-link from the dashboard agenda (?appt=&date=): which appointment to
+  // auto-open, and whether we've already done so this mount.
+  const pendingApptId = useRef<string | null>(null);
+  const consumedDeepLink = useRef(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -201,6 +205,24 @@ export function WeeklyCalendar({
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Deep link from the dashboard agenda: jump to the appointment's week so its
+  // week gets fetched; the effect below opens the detail once it's loaded. Read
+  // from window.location (not useSearchParams) to avoid the Suspense/build
+  // requirement and any static de-opt.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const appt = params.get("appt");
+    const date = params.get("date");
+    if (!appt) return;
+    pendingApptId.current = appt;
+    if (date) {
+      const [y, m, d] = date.split("-").map(Number);
+      if (y && m && d) {
+        setCurrentWeek(getWeekStart(new Date(y, m - 1, d, 12, 0, 0)));
+      }
+    }
+  }, []);
 
   function navigateWeek(direction: number) {
     const next = new Date(currentWeek);
@@ -246,6 +268,19 @@ export function WeeklyCalendar({
       }
     });
   }
+
+  // Once the deep-linked appointment's week has loaded, open its detail panel.
+  useEffect(() => {
+    if (consumedDeepLink.current || loading) return;
+    const id = pendingApptId.current;
+    if (!id) return;
+    const found = appointments.find((a) => a.id === id);
+    if (found) {
+      consumedDeepLink.current = true;
+      pendingApptId.current = null;
+      handleAppointmentClick(found);
+    }
+  }, [appointments, loading]);
 
   function handleNewAppointment() {
     setPrefilledDate(null);

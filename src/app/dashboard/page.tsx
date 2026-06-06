@@ -176,7 +176,11 @@ export default async function DashboardPage() {
                             <div className="min-w-0">
                               {patient ? (
                                 <Link
-                                  href={`/dashboard/patients/${patient.id}`}
+                                  href={
+                                    a.status === "cancelled"
+                                      ? `/dashboard/patients/${patient.id}`
+                                      : `/dashboard/calendar?appt=${a.id}&date=${key}`
+                                  }
                                   className="font-medium hover:underline truncate block"
                                 >
                                   {patient.full_name}
