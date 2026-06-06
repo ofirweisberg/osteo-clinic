@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,13 +18,26 @@ import {
   History,
   Pencil,
   X,
+  Upload,
+  Camera,
+  Paperclip,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { updateAppointmentStatus, deleteAppointment, updateAppointmentPrice } from "./actions";
+import {
+  updateAppointmentStatus,
+  deleteAppointment,
+  updateAppointmentPrice,
+  updateAppointmentDateTime,
+} from "./actions";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import Link from "next/link";
 import { formatPhoneDisplay } from "@/lib/phone";
+
+const FILES_BUCKET = "patient-files";
 
 interface Appointment {
   id: string;
@@ -51,6 +64,26 @@ interface VisitLog {
   appointment_id: string;
   visit_date: string;
   notes: string | null;
+}
+
+interface AppFile {
+  id: string;
+  appointment_id: string;
+  patient_id: string;
+  storage_path: string;
+  file_name: string;
+  mime_type: string | null;
+  created_at: string;
+}
+
+// One past-visit row in the history: any of the patient's other appointments
+// that has notes and/or files attached.
+interface HistoryEntry {
+  id: string; // appointment id
+  starts_at: string;
+  treatment: { name: string; color: string } | null;
+  notes: string | null;
+  files: AppFile[];
 }
 
 const STATUS_MAP: Record<
@@ -88,6 +121,28 @@ function formatShortDate(iso: string) {
   });
 }
 
+// Local (browser = Israel) date/time strings for the <input> fields. We build
+// the new instant with the local-date constructor on save — never parse a naive
+// "YYYY-MM-DDTHH:mm" string (that's read as UTC and shifts the date).
+function toDateInput(iso: string) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+function toTimeInput(iso: string) {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(
+    d.getMinutes()
+  ).padStart(2, "0")}`;
+}
+
+const isImage = (mime: string | null) => !!mime && mime.startsWith("image/");
+
+// Supabase to-one joins may arrive as an object or a single-element array.
+const one = <T,>(x: T | T[] | null | undefined): T | null =>
+  Array.isArray(x) ? x[0] ?? null : x ?? null;
+
 export function AppointmentDetail({
   open,
   onOpenChange,
@@ -103,17 +158,71 @@ export function AppointmentDetail({
   const [visitLog, setVisitLog] = useState<VisitLog | null>(null);
   const [visitNotes, setVisitNotes] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
-  const [patientHistory, setPatientHistory] = useState<VisitLog[]>([]);
+  const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [editingPrice, setEditingPrice] = useState(false);
   const [priceValue, setPriceValue] = useState("");
 
-  // Load visit log for this appointment + patient history
+  // Date/time editing
+  const [editingDateTime, setEditingDateTime] = useState(false);
+  const [dateValue, setDateValue] = useState("");
+  const [timeValue, setTimeValue] = useState("");
+  const [savingDateTime, setSavingDateTime] = useState(false);
+
+  // Files for this appointment
+  const [files, setFiles] = useState<AppFile[]>([]);
+  const [fileUrls, setFileUrls] = useState<Record<string, string>>({});
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  // Signed URLs (file id → URL) for files shown in the history entries.
+  const [historyFileUrls, setHistoryFileUrls] = useState<Record<string, string>>(
+    {}
+  );
+
+  // Sign every file's storage path for inline viewing (images) / opening.
+  const signFiles = useCallback(
+    async (list: AppFile[]) => {
+      const urls: Record<string, string> = {};
+      await Promise.all(
+        list.map(async (f) => {
+          const { data } = await supabase.storage
+            .from(FILES_BUCKET)
+            .createSignedUrl(f.storage_path, 3600);
+          if (data?.signedUrl) urls[f.id] = data.signedUrl;
+        })
+      );
+      return urls;
+    },
+    [supabase]
+  );
+
+  const loadFiles = useCallback(async () => {
+    if (!appointment) return;
+    try {
+      const { data, error } = await supabase
+        .from("appointment_files")
+        .select("*")
+        .eq("appointment_id", appointment.id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      const list = (data as AppFile[]) ?? [];
+      setFiles(list);
+      setFileUrls(await signFiles(list));
+    } catch {
+      // Table/bucket not migrated yet — keep the panel working regardless.
+      setFiles([]);
+      setFileUrls({});
+    }
+  }, [appointment, supabase, signFiles]);
+
+  // Load visit log for this appointment + reset transient state on open.
   const loadData = useCallback(async () => {
     if (!appointment) return;
 
-    // Get visit log for this specific appointment
     const { data: logs } = await supabase
       .from("visit_logs")
       .select("*")
@@ -129,7 +238,11 @@ export function AppointmentDetail({
     }
 
     setShowHistory(false);
-  }, [appointment, supabase]);
+    setHistoryLoaded(false);
+    setEditingDateTime(false);
+    setEditingPrice(false);
+    loadFiles();
+  }, [appointment, supabase, loadFiles]);
 
   useEffect(() => {
     if (open && appointment) {
@@ -137,20 +250,81 @@ export function AppointmentDetail({
     }
   }, [open, appointment, loadData]);
 
-  async function loadPatientHistory() {
+  async function handleToggleHistory() {
     if (!appointment) return;
-    setLoadingHistory(true);
+    if (showHistory) {
+      setShowHistory(false);
+      return;
+    }
+    if (!historyLoaded) {
+      setLoadingHistory(true);
+      const pid = appointment.patient_id;
+      const curId = appointment.id;
 
-    const { data } = await supabase
-      .from("visit_logs")
-      .select("*, appointments(starts_at, treatment_types(name, color))")
-      .eq("patient_id", appointment.patient_id)
-      .neq("appointment_id", appointment.id)
-      .order("visit_date", { ascending: false });
+      // History is appointment-based: every OTHER appointment for the patient,
+      // enriched with its notes (visit_logs) and files (appointment_files). We
+      // then keep entries that have notes OR files — so files show even when no
+      // note was ever written for that visit.
+      type ApptRow = {
+        id: string;
+        starts_at: string;
+        treatment_types:
+          | { name: string; color: string }
+          | { name: string; color: string }[]
+          | null;
+      };
+      type LogRow = { appointment_id: string; notes: string | null };
 
-    setPatientHistory((data as VisitLog[]) ?? []);
+      const [apptsRes, logsRes] = await Promise.all([
+        supabase
+          .from("appointments")
+          .select("id, starts_at, treatment_types(name, color)")
+          .eq("patient_id", pid)
+          .neq("id", curId)
+          .order("starts_at", { ascending: false }),
+        supabase
+          .from("visit_logs")
+          .select("appointment_id, notes")
+          .eq("patient_id", pid)
+          .neq("appointment_id", curId),
+      ]);
+
+      const notesByAppt: Record<string, string | null> = {};
+      for (const l of (logsRes.data as LogRow[] | null) ?? []) {
+        notesByAppt[l.appointment_id] = l.notes;
+      }
+
+      // Files grouped by appointment (table/bucket may not be migrated yet).
+      const filesByAppt: Record<string, AppFile[]> = {};
+      try {
+        const { data: pf } = await supabase
+          .from("appointment_files")
+          .select("*")
+          .eq("patient_id", pid)
+          .neq("appointment_id", curId)
+          .order("created_at", { ascending: false });
+        const all = (pf as AppFile[]) ?? [];
+        for (const f of all) (filesByAppt[f.appointment_id] ??= []).push(f);
+        setHistoryFileUrls(await signFiles(all));
+      } catch {
+        setHistoryFileUrls({});
+      }
+
+      const entries: HistoryEntry[] = ((apptsRes.data as ApptRow[] | null) ?? [])
+        .map((a) => ({
+          id: a.id,
+          starts_at: a.starts_at,
+          treatment: one(a.treatment_types),
+          notes: notesByAppt[a.id] ?? null,
+          files: filesByAppt[a.id] ?? [],
+        }))
+        .filter((e) => (e.notes && e.notes.trim().length > 0) || e.files.length > 0);
+
+      setHistoryEntries(entries);
+      setHistoryLoaded(true);
+      setLoadingHistory(false);
+    }
     setShowHistory(true);
-    setLoadingHistory(false);
   }
 
   async function handleSaveNotes() {
@@ -159,16 +333,16 @@ export function AppointmentDetail({
 
     try {
       if (visitLog) {
-        // Update existing
         const { error } = await supabase
           .from("visit_logs")
           .update({ notes: visitNotes })
           .eq("id", visitLog.id);
         if (error) throw error;
       } else {
-        // Create new
         const visitDate = new Date(appointment.starts_at);
-        const dateStr = `${visitDate.getFullYear()}-${(visitDate.getMonth() + 1).toString().padStart(2, "0")}-${visitDate.getDate().toString().padStart(2, "0")}`;
+        const dateStr = `${visitDate.getFullYear()}-${(visitDate.getMonth() + 1)
+          .toString()
+          .padStart(2, "0")}-${visitDate.getDate().toString().padStart(2, "0")}`;
 
         const { data, error } = await supabase
           .from("visit_logs")
@@ -191,12 +365,57 @@ export function AppointmentDetail({
     }
   }
 
+  async function handleUpload(fileList: FileList | null) {
+    if (!appointment || !fileList || fileList.length === 0) return;
+    setUploading(true);
+    try {
+      for (const file of Array.from(fileList)) {
+        const safe = file.name.replace(/[^\w.\-]/g, "_");
+        const path = `${appointment.patient_id}/${appointment.id}/${Date.now()}_${safe}`;
+        const { error: upErr } = await supabase.storage
+          .from(FILES_BUCKET)
+          .upload(path, file, { contentType: file.type || undefined });
+        if (upErr) throw upErr;
+        const { error: insErr } = await supabase.from("appointment_files").insert({
+          appointment_id: appointment.id,
+          patient_id: appointment.patient_id,
+          storage_path: path,
+          file_name: file.name,
+          mime_type: file.type || null,
+          size_bytes: file.size,
+        });
+        if (insErr) throw insErr;
+      }
+      toast.success("הקובץ הועלה");
+      await loadFiles();
+    } catch {
+      toast.error("שגיאה בהעלאת הקובץ");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (cameraInputRef.current) cameraInputRef.current.value = "";
+    }
+  }
+
+  async function handleDeleteFile(f: AppFile) {
+    if (!confirm("למחוק את הקובץ?")) return;
+    try {
+      await supabase.storage.from(FILES_BUCKET).remove([f.storage_path]);
+      await supabase.from("appointment_files").delete().eq("id", f.id);
+      setFiles((prev) => prev.filter((x) => x.id !== f.id));
+      toast.success("הקובץ נמחק");
+    } catch {
+      toast.error("שגיאה במחיקת קובץ");
+    }
+  }
+
   if (!appointment) return null;
 
   const statusInfo = STATUS_MAP[appointment.status] ?? STATUS_MAP.pending;
 
   function startEditPrice() {
-    const effectivePrice = appointment!.price ?? appointment!.treatment_types?.price ?? 0;
+    const effectivePrice =
+      appointment!.price ?? appointment!.treatment_types?.price ?? 0;
     setPriceValue(String(effectivePrice));
     setEditingPrice(true);
   }
@@ -212,6 +431,37 @@ export function AppointmentDetail({
       onUpdated();
     } catch {
       toast.error("שגיאה בעדכון מחיר");
+    }
+  }
+
+  function startEditDateTime() {
+    setDateValue(toDateInput(appointment!.starts_at));
+    setTimeValue(toTimeInput(appointment!.starts_at));
+    setEditingDateTime(true);
+  }
+
+  async function handleSaveDateTime() {
+    if (!dateValue || !timeValue) return;
+    const [y, m, d] = dateValue.split("-").map(Number);
+    const [hh, mm] = timeValue.split(":").map(Number);
+    // Local constructor → correct Israel instant; toISOString() stores UTC.
+    const starts = new Date(y, m - 1, d, hh, mm, 0, 0);
+    const duration = appointment!.treatment_types?.duration_minutes ?? 60;
+    const ends = new Date(starts.getTime() + duration * 60000);
+    setSavingDateTime(true);
+    try {
+      await updateAppointmentDateTime(
+        appointment!.id,
+        starts.toISOString(),
+        ends.toISOString()
+      );
+      toast.success("מועד התור עודכן");
+      setEditingDateTime(false);
+      onUpdated();
+    } catch {
+      toast.error("שגיאה בעדכון מועד התור");
+    } finally {
+      setSavingDateTime(false);
     }
   }
 
@@ -239,6 +489,56 @@ export function AppointmentDetail({
   }
 
   if (!open) return null;
+
+  // Small reusable file-grid renderer (used for the current appointment and
+  // each history entry). `urls` maps file id → signed URL.
+  const renderFiles = (
+    list: AppFile[],
+    urls: Record<string, string>,
+    onDelete?: (f: AppFile) => void
+  ) => (
+    <div className="flex flex-wrap gap-2">
+      {list.map((f) => {
+        const url = urls[f.id];
+        return (
+          <div key={f.id} className="relative group">
+            {isImage(f.mime_type) && url ? (
+              <a href={url} target="_blank" rel="noopener noreferrer">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={url}
+                  alt={f.file_name}
+                  className="h-20 w-20 rounded-md object-cover border"
+                />
+              </a>
+            ) : (
+              <a
+                href={url ?? "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-md border p-1 text-center hover:bg-muted"
+              >
+                <Paperclip className="h-5 w-5 text-muted-foreground" />
+                <span className="text-[10px] leading-tight text-muted-foreground line-clamp-2 break-all">
+                  {f.file_name}
+                </span>
+              </a>
+            )}
+            {onDelete && (
+              <button
+                type="button"
+                onClick={() => onDelete(f)}
+                className="absolute -top-1.5 -end-1.5 hidden h-5 w-5 items-center justify-center rounded-full bg-destructive text-white group-hover:flex"
+                aria-label="מחק קובץ"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="border-t bg-card shrink-0 flex flex-col" style={{ height: "66vh" }}>
@@ -291,14 +591,63 @@ export function AppointmentDetail({
                   {appointment.treatment_types?.name}
                 </span>
               </div>
-              <div className="flex items-center gap-2 text-sm">
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                <span>
-                  {formatDate(appointment.starts_at)} ·{" "}
-                  {formatTime(appointment.starts_at)} -{" "}
-                  {formatTime(appointment.ends_at)}
-                </span>
-              </div>
+
+              {/* Date + time (editable) */}
+              {editingDateTime ? (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="date"
+                      value={dateValue}
+                      onChange={(e) => setDateValue(e.target.value)}
+                      className="h-8 w-40 text-sm"
+                    />
+                    <Input
+                      type="time"
+                      value={timeValue}
+                      onChange={(e) => setTimeValue(e.target.value)}
+                      className="h-8 w-28 text-sm"
+                      dir="ltr"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={handleSaveDateTime}
+                      disabled={savingDateTime}
+                    >
+                      <Save className="h-3 w-3 me-1" />
+                      {savingDateTime ? "שומר..." : "שמור מועד"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setEditingDateTime(false)}
+                    >
+                      ביטול
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    משך הטיפול ({appointment.treatment_types?.duration_minutes} דקות) נשמר —
+                    שעת הסיום מתעדכנת אוטומטית.
+                  </p>
+                </div>
+              ) : (
+                <button
+                  className="flex items-center gap-2 text-sm hover:text-primary transition-colors w-fit"
+                  onClick={startEditDateTime}
+                >
+                  <Clock className="h-4 w-4 text-muted-foreground" />
+                  <span>
+                    {formatDate(appointment.starts_at)} ·{" "}
+                    {formatTime(appointment.starts_at)} -{" "}
+                    {formatTime(appointment.ends_at)}
+                  </span>
+                  <Pencil className="h-3 w-3 text-muted-foreground" />
+                </button>
+              )}
+
               <div className="text-sm text-muted-foreground">
                 {appointment.treatment_types?.duration_minutes} דקות
               </div>
@@ -369,9 +718,7 @@ export function AppointmentDetail({
                   הערות טיפול
                 </p>
                 {visitLog && (
-                  <span className="text-xs text-muted-foreground">
-                    {visitLog ? "עודכן" : "חדש"}
-                  </span>
+                  <span className="text-xs text-muted-foreground">עודכן</span>
                 )}
               </div>
               <Textarea
@@ -392,63 +739,125 @@ export function AppointmentDetail({
               </Button>
             </div>
 
+            {/* Files / photos */}
+            <div className="flex flex-col gap-2">
+              <p className="text-sm font-medium flex items-center gap-1.5">
+                <Paperclip className="h-3.5 w-3.5" />
+                קבצים ותמונות
+              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => handleUpload(e.target.files)}
+              />
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => handleUpload(e.target.files)}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={uploading}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {uploading ? (
+                    <Loader2 className="h-3 w-3 me-1 animate-spin" />
+                  ) : (
+                    <Upload className="h-3 w-3 me-1" />
+                  )}
+                  העלה קובץ
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={uploading}
+                  onClick={() => cameraInputRef.current?.click()}
+                >
+                  <Camera className="h-3 w-3 me-1" />
+                  צלם תמונה
+                </Button>
+              </div>
+              {files.length > 0 && renderFiles(files, fileUrls, handleDeleteFile)}
+            </div>
+
             <Separator />
 
-            {/* Patient History */}
+            {/* Patient History (toggle) */}
             <div className="flex flex-col gap-2">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={loadPatientHistory}
+                onClick={handleToggleHistory}
                 disabled={loadingHistory}
                 className="w-fit"
               >
-                <History className="h-3 w-3 me-1" />
+                {loadingHistory ? (
+                  <Loader2 className="h-3 w-3 me-1 animate-spin" />
+                ) : (
+                  <History className="h-3 w-3 me-1" />
+                )}
                 {loadingHistory
                   ? "טוען..."
                   : showHistory
-                    ? "רענן היסטוריה"
+                    ? "הסתר היסטוריית טיפולים"
                     : "הצג היסטוריית טיפולים"}
+                {!loadingHistory &&
+                  (showHistory ? (
+                    <ChevronUp className="h-3 w-3 ms-1" />
+                  ) : (
+                    <ChevronDown className="h-3 w-3 ms-1" />
+                  ))}
               </Button>
 
               {showHistory && (
                 <div className="flex flex-col gap-2 mt-1">
-                  {patientHistory.length === 0 ? (
+                  {historyEntries.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       אין רשומות טיפול קודמות
                     </p>
                   ) : (
-                    patientHistory.map((log: any) => (
+                    historyEntries.map((entry) => (
                       <div
-                        key={log.id}
+                        key={entry.id}
                         className="rounded-lg border p-3 text-sm"
                       >
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-muted-foreground text-xs">
-                            {formatShortDate(log.visit_date)}
+                            {formatShortDate(entry.starts_at)}
                           </span>
-                          {log.appointments?.treatment_types && (
+                          {entry.treatment && (
                             <Badge
                               variant="secondary"
                               className="text-xs py-0"
                               style={{
-                                borderColor:
-                                  log.appointments.treatment_types.color,
+                                borderColor: entry.treatment.color,
                                 borderWidth: 1,
                               }}
                             >
-                              {log.appointments.treatment_types.name}
+                              {entry.treatment.name}
                             </Badge>
                           )}
                         </div>
-                        {log.notes ? (
+                        {entry.notes ? (
                           <p className="whitespace-pre-wrap text-muted-foreground">
-                            {log.notes}
+                            {entry.notes}
                           </p>
                         ) : (
                           <p className="text-muted-foreground/50 italic">
                             ללא הערות
                           </p>
+                        )}
+                        {entry.files.length > 0 && (
+                          <div className="mt-2">
+                            {renderFiles(entry.files, historyFileUrls)}
+                          </div>
                         )}
                       </div>
                     ))

@@ -50,6 +50,21 @@ export async function updateAppointmentStatus(id: string, status: string) {
   revalidatePath("/dashboard/calendar");
 }
 
+export async function updateAppointmentDateTime(
+  id: string,
+  starts_at: string,
+  ends_at: string
+) {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("appointments")
+    .update({ starts_at, ends_at })
+    .eq("id", id);
+  if (error) throw error;
+  revalidatePath("/dashboard/calendar");
+  revalidatePath("/dashboard");
+}
+
 export async function updateAppointmentPrice(id: string, price: number | null) {
   const supabase = await createClient();
   const { error } = await supabase
