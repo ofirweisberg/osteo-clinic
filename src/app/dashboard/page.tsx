@@ -2,7 +2,6 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
 import { CalendarDays, Clock } from "lucide-react";
 
 // Appointments are stored as timestamptz. Vercel runs in UTC, so we must format
@@ -114,7 +113,7 @@ export default async function DashboardPage() {
         <h2 className="text-2xl font-bold">לוח זמנים — 7 הימים הקרובים</h2>
         <Link
           href="/dashboard/calendar"
-          className={buttonVariants({ variant: "outline", size: "sm" })}
+          className="inline-flex items-center gap-1 h-7 rounded-md border border-border bg-background px-2.5 text-[0.8rem] font-medium whitespace-nowrap transition-colors hover:bg-muted hover:text-foreground [&_svg]:size-3.5"
         >
           <CalendarDays className="h-4 w-4" />
           לוח שנה מלא
