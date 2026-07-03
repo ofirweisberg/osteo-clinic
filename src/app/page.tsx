@@ -1,7 +1,5 @@
 import Link from "next/link";
 import { queryOne } from "@/lib/db";
-import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { CalendarPlus, Phone, MapPin, LogIn } from "lucide-react";
 
@@ -43,12 +41,9 @@ export default async function Home() {
 
         <Link
           href="/book"
-          className={cn(
-            buttonVariants({ size: "lg" }),
-            "w-full max-w-xs text-lg"
-          )}
+          className="inline-flex h-11 w-full max-w-xs items-center justify-center gap-2 rounded-lg bg-primary px-4 text-lg font-medium text-primary-foreground transition-all hover:bg-primary/80 [&_svg]:size-5"
         >
-          <CalendarPlus className="ms-2" />
+          <CalendarPlus />
           הזמנת תור אונליין
         </Link>
 
