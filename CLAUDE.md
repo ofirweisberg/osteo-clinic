@@ -8,22 +8,24 @@ Built for a single practitioner (osteopath). Hebrew RTL UI only.
 ## Tech Stack
 - **Frontend:** Next.js 16 (App Router) + TypeScript
 - **UI:** shadcn/ui + Tailwind CSS v4, Hebrew RTL, Heebo font
-- **Database + Auth:** Supabase (Postgres + Auth + RLS)
-- **Hosting:** Vercel (free tier)
+- **Database:** Azure PostgreSQL (`osteoclinic` DB on the shared `barly-pg` flexible server), direct `pg` via `src/lib/db.ts`
+- **Auth:** single-practitioner credentials (bcrypt hash in env) + jose JWT cookie (`src/lib/auth.ts`)
+- **Files:** Azure Blob, private `patient-files` container in `doclinicspnt` storage account, SAS URLs (`src/lib/storage.ts`)
+- **Hosting:** Azure App Service `doclinics-pnt` (shared `barly-plan` B2, RG `barly-rg`), standalone Next build (migrated off Vercel+Supabase 2026-07-03)
 - **WhatsApp:** Green API (not yet configured)
 
 ## URLs
-- **Live:** https://osteo-clinic.vercel.app (will be https://doclinics.net)
+- **Live:** https://doclinics-pnt.azurewebsites.net (custom domain: https://doclinics.net)
 - **Public booking:** /book
 - **GitHub:** https://github.com/ofirweisberg/osteo-clinic
-- **Supabase:** Project ID `mvjklgakvqtimjipkzcb`
 
 ## Architecture
-- **Auth:** Supabase Auth, single practitioner, middleware protects `/dashboard/*`
-- **Public routes:** `/login`, `/book`, `/api/book`, `/api/whatsapp/status`, `/api/reminders`
-- **Server actions:** Each feature has `actions.ts` with server-side Supabase calls
-- **Client components:** Use `createClient()` from `@/lib/supabase/client` for real-time data
+- **Auth:** env-credential login (`PRACTITIONER_EMAIL` + `PRACTITIONER_PASSWORD_HASH`), JWT session cookie `oc_session`; `src/middleware.ts` guards `/dashboard/*`
+- **Public routes:** `/login`, `/book`, `/api/book`, `/api/whatsapp/status`, `/api/reminders` (CRON_SECRET)
+- **Server actions:** Each feature has `actions.ts` with parameterized SQL via `query`/`queryOne` from `@/lib/db`; dashboard actions guarded with `getSession()`. Old anon-RLS rules for /book are enforced server-side in `src/app/book/actions.ts` + `/api/book`
+- **DB type parsers** in `db.ts` mimic PostgREST JSON: NUMERIC→number, DATE→"YYYY-MM-DD" string, TIMESTAMPTZ→ISO string (keeps the manual component interfaces working)
 - **Database types:** Manual interfaces in each component (not auto-generated)
+- **Deploy:** `npm run build`, then zip `.next/standalone` + `.next/static` + `public` → `az webapp deploy -g barly-rg -n doclinics-pnt --type zip`
 
 ## Key Patterns
 - **Timezone:** Always use local date parsing (`new Date(year, month-1, day, h, m)`) — NEVER `new Date("YYYY-MM-DDTHH:mm")` which parses as UTC and shifts dates in Israel (UTC+3)
@@ -80,20 +82,19 @@ src/components/
 
 ## WhatsApp Setup (When Ready)
 1. Create account at green-api.com, create Instance, scan QR with WhatsApp
-2. Add to Vercel env vars: `GREENAPI_INSTANCE_ID`, `GREENAPI_API_TOKEN`
-3. For daily reminders: use free external cron (cron-job.org) to call `GET /api/reminders` with header `Authorization: Bearer <CRON_SECRET>` — once daily at 8pm Israel time
-4. Or upgrade Vercel to Pro ($20/mo) and add cron in vercel.json
+2. Add `GREENAPI_INSTANCE_ID`, `GREENAPI_API_TOKEN` to Azure app settings (`az webapp config appsettings set -g barly-rg -n doclinics-pnt`)
+3. For daily reminders: free external cron (cron-job.org) calls `GET /api/reminders` with header `Authorization: Bearer <CRON_SECRET>` — once daily at 8pm Israel time
 
 ## Custom Domain Setup
 - Domain: `doclinics.net` registered at GoDaddy
-- GoDaddy DNS: A record `@` → `76.76.21.21`, CNAME `www` → `cname.vercel-dns.com`
-- Vercel: add `doclinics.net` and `www.doclinics.net` in project → Settings → Domains
-- SSL auto-provisioned by Vercel
+- GoDaddy DNS: A `@` → App Service inbound IP, CNAME `www` → `doclinics-pnt.azurewebsites.net`, TXT `asuid`/`asuid.www` → customDomainVerificationId
+- Azure: `az webapp config hostname add` + free App Service managed certs (SNI)
 
-## Env Variables (Vercel + .env.local)
-- `NEXT_PUBLIC_SUPABASE_URL` — Supabase project URL
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Supabase publishable key
-- `SUPABASE_SERVICE_ROLE_KEY` — Supabase secret key (for API routes)
+## Env Variables (Azure app settings + .env.local)
+- `DATABASE_URL` — postgres://osteoclinic_app:…@barly-pg…/osteoclinic?sslmode=require
+- `AUTH_SECRET` — signs the session JWT
+- `PRACTITIONER_EMAIL` / `PRACTITIONER_PASSWORD_HASH` — login credentials (bcrypt)
+- `AZURE_STORAGE_CONNECTION_STRING` — doclinicspnt account (patient-files container)
 - `CRON_SECRET` — protects /api/reminders endpoint
 - `GREENAPI_INSTANCE_ID` — Green API instance (optional, for WhatsApp)
 - `GREENAPI_API_TOKEN` — Green API token (optional, for WhatsApp)
@@ -104,4 +105,3 @@ src/components/
 - No email notifications
 - No recurring appointments support
 - No multi-practitioner support (single user only)
-- Supabase types are manual — could auto-generate with `supabase gen types typescript`
