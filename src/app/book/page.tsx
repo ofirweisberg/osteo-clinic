@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
+import {
+  getPracticeSettings,
+  getActiveTreatmentTypes,
+  getScheduleBlocks,
+  getAppointmentsForDate,
+} from "./actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -62,8 +67,6 @@ const DAY_LABELS: Record<number, string> = {
 type Step = "info" | "treatment" | "date" | "time" | "confirm" | "done";
 
 export default function BookPage() {
-  const supabase = createClient();
-
   const [step, setStep] = useState<Step>("info");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -88,38 +91,34 @@ export default function BookPage() {
 
   useEffect(() => {
     async function load() {
-      const [settingsRes, treatmentsRes, blocksRes] = await Promise.all([
-        supabase.from("practice_settings").select("*").single(),
-        supabase
-          .from("treatment_types")
-          .select("*")
-          .eq("is_active", true)
-          .order("name"),
-        supabase.from("schedule_blocks").select("*"),
-      ]);
-      setSettings(settingsRes.data as PracticeSettings);
-      setTreatments(treatmentsRes.data ?? []);
-      setScheduleBlocks(blocksRes.data ?? []);
-      setLoading(false);
+      try {
+        const [settingsData, treatmentsData, blocksData] = await Promise.all([
+          getPracticeSettings(),
+          getActiveTreatmentTypes(),
+          getScheduleBlocks(),
+        ]);
+        setSettings(settingsData as PracticeSettings | null);
+        setTreatments(treatmentsData ?? []);
+        setScheduleBlocks(blocksData ?? []);
+      } catch (err) {
+        console.error("Failed to load booking data:", err);
+      } finally {
+        setLoading(false);
+      }
     }
     load();
   }, []);
 
   // Fetch appointments for selected date
-  const fetchAppointmentsForDate = useCallback(
-    async (dateStr: string) => {
-      const dayStart = `${dateStr}T00:00:00`;
-      const dayEnd = `${dateStr}T23:59:59`;
-      const { data } = await supabase
-        .from("appointments")
-        .select("starts_at, ends_at")
-        .gte("starts_at", dayStart)
-        .lte("starts_at", dayEnd)
-        .in("status", ["pending", "confirmed"]);
+  const fetchAppointmentsForDate = useCallback(async (dateStr: string) => {
+    try {
+      const data = await getAppointmentsForDate(dateStr);
       setExistingAppointments(data ?? []);
-    },
-    [supabase]
-  );
+    } catch (err) {
+      console.error("Failed to load appointments:", err);
+      setExistingAppointments([]);
+    }
+  }, []);
 
   useEffect(() => {
     if (selectedDate) {

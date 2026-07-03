@@ -33,13 +33,18 @@ import {
   deleteAppointment,
   updateAppointmentPrice,
   updateAppointmentDateTime,
+  getVisitLog,
+  updateVisitLogNotes,
+  createVisitLogForAppointment,
+  getPatientHistory,
+  getAppointmentFiles,
+  uploadAppointmentFile,
+  getFileSignedUrl,
+  deleteAppointmentFile,
 } from "./actions";
-import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import Link from "next/link";
 import { formatPhoneDisplay } from "@/lib/phone";
-
-const FILES_BUCKET = "patient-files";
 
 interface Appointment {
   id: string;
@@ -160,7 +165,6 @@ export function AppointmentDetail({
   size?: "full" | "half";
   onSizeChange?: (size: "full" | "half") => void;
 }) {
-  const supabase = createClient();
   const [visitLog, setVisitLog] = useState<VisitLog | null>(null);
   const [visitNotes, setVisitNotes] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
@@ -190,54 +194,47 @@ export function AppointmentDetail({
   );
 
   // Sign every file's storage path for inline viewing (images) / opening.
-  const signFiles = useCallback(
-    async (list: AppFile[]) => {
-      const urls: Record<string, string> = {};
-      await Promise.all(
-        list.map(async (f) => {
-          const { data } = await supabase.storage
-            .from(FILES_BUCKET)
-            .createSignedUrl(f.storage_path, 3600);
-          if (data?.signedUrl) urls[f.id] = data.signedUrl;
-        })
-      );
-      return urls;
-    },
-    [supabase]
-  );
+  const signFiles = useCallback(async (list: AppFile[]) => {
+    const urls: Record<string, string> = {};
+    await Promise.all(
+      list.map(async (f) => {
+        try {
+          urls[f.id] = await getFileSignedUrl(f.storage_path);
+        } catch {
+          // Skip files we couldn't sign — the tile still renders.
+        }
+      })
+    );
+    return urls;
+  }, []);
 
   const loadFiles = useCallback(async () => {
     if (!appointment) return;
     try {
-      const { data, error } = await supabase
-        .from("appointment_files")
-        .select("*")
-        .eq("appointment_id", appointment.id)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      const list = (data as AppFile[]) ?? [];
+      const list = ((await getAppointmentFiles(appointment.id)) as AppFile[]) ?? [];
       setFiles(list);
       setFileUrls(await signFiles(list));
     } catch {
-      // Table/bucket not migrated yet — keep the panel working regardless.
+      // Table/container not migrated yet — keep the panel working regardless.
       setFiles([]);
       setFileUrls({});
     }
-  }, [appointment, supabase, signFiles]);
+  }, [appointment, signFiles]);
 
   // Load visit log for this appointment + reset transient state on open.
   const loadData = useCallback(async () => {
     if (!appointment) return;
 
-    const { data: logs } = await supabase
-      .from("visit_logs")
-      .select("*")
-      .eq("appointment_id", appointment.id)
-      .limit(1);
+    let log: VisitLog | null = null;
+    try {
+      log = (await getVisitLog(appointment.id)) as VisitLog | null;
+    } catch {
+      log = null;
+    }
 
-    if (logs && logs.length > 0) {
-      setVisitLog(logs[0]);
-      setVisitNotes(logs[0].notes ?? "");
+    if (log) {
+      setVisitLog(log);
+      setVisitNotes(log.notes ?? "");
     } else {
       setVisitLog(null);
       setVisitNotes("");
@@ -248,7 +245,7 @@ export function AppointmentDetail({
     setEditingDateTime(false);
     setEditingPrice(false);
     loadFiles();
-  }, [appointment, supabase, loadFiles]);
+  }, [appointment, loadFiles]);
 
   useEffect(() => {
     if (open && appointment) {
@@ -281,52 +278,39 @@ export function AppointmentDetail({
       };
       type LogRow = { appointment_id: string; notes: string | null };
 
-      const [apptsRes, logsRes] = await Promise.all([
-        supabase
-          .from("appointments")
-          .select("id, starts_at, treatment_types(name, color)")
-          .eq("patient_id", pid)
-          .neq("id", curId)
-          .order("starts_at", { ascending: false }),
-        supabase
-          .from("visit_logs")
-          .select("appointment_id, notes")
-          .eq("patient_id", pid)
-          .neq("appointment_id", curId),
-      ]);
-
-      const notesByAppt: Record<string, string | null> = {};
-      for (const l of (logsRes.data as LogRow[] | null) ?? []) {
-        notesByAppt[l.appointment_id] = l.notes;
-      }
-
-      // Files grouped by appointment (table/bucket may not be migrated yet).
-      const filesByAppt: Record<string, AppFile[]> = {};
       try {
-        const { data: pf } = await supabase
-          .from("appointment_files")
-          .select("*")
-          .eq("patient_id", pid)
-          .neq("appointment_id", curId)
-          .order("created_at", { ascending: false });
-        const all = (pf as AppFile[]) ?? [];
-        for (const f of all) (filesByAppt[f.appointment_id] ??= []).push(f);
-        setHistoryFileUrls(await signFiles(all));
+        const history = await getPatientHistory(pid, curId);
+
+        const notesByAppt: Record<string, string | null> = {};
+        for (const l of (history.logs as LogRow[] | null) ?? []) {
+          notesByAppt[l.appointment_id] = l.notes;
+        }
+
+        // Files grouped by appointment (table/container may not be migrated yet).
+        const filesByAppt: Record<string, AppFile[]> = {};
+        try {
+          const all = (history.files as AppFile[]) ?? [];
+          for (const f of all) (filesByAppt[f.appointment_id] ??= []).push(f);
+          setHistoryFileUrls(await signFiles(all));
+        } catch {
+          setHistoryFileUrls({});
+        }
+
+        const entries: HistoryEntry[] = ((history.appointments as ApptRow[] | null) ?? [])
+          .map((a) => ({
+            id: a.id,
+            starts_at: a.starts_at,
+            treatment: one(a.treatment_types),
+            notes: notesByAppt[a.id] ?? null,
+            files: filesByAppt[a.id] ?? [],
+          }))
+          .filter((e) => (e.notes && e.notes.trim().length > 0) || e.files.length > 0);
+
+        setHistoryEntries(entries);
       } catch {
+        setHistoryEntries([]);
         setHistoryFileUrls({});
       }
-
-      const entries: HistoryEntry[] = ((apptsRes.data as ApptRow[] | null) ?? [])
-        .map((a) => ({
-          id: a.id,
-          starts_at: a.starts_at,
-          treatment: one(a.treatment_types),
-          notes: notesByAppt[a.id] ?? null,
-          files: filesByAppt[a.id] ?? [],
-        }))
-        .filter((e) => (e.notes && e.notes.trim().length > 0) || e.files.length > 0);
-
-      setHistoryEntries(entries);
       setHistoryLoaded(true);
       setLoadingHistory(false);
     }
@@ -339,29 +323,20 @@ export function AppointmentDetail({
 
     try {
       if (visitLog) {
-        const { error } = await supabase
-          .from("visit_logs")
-          .update({ notes: visitNotes })
-          .eq("id", visitLog.id);
-        if (error) throw error;
+        await updateVisitLogNotes(visitLog.id, visitNotes);
       } else {
         const visitDate = new Date(appointment.starts_at);
         const dateStr = `${visitDate.getFullYear()}-${(visitDate.getMonth() + 1)
           .toString()
           .padStart(2, "0")}-${visitDate.getDate().toString().padStart(2, "0")}`;
 
-        const { data, error } = await supabase
-          .from("visit_logs")
-          .insert({
-            appointment_id: appointment.id,
-            patient_id: appointment.patient_id,
-            visit_date: dateStr,
-            notes: visitNotes,
-          })
-          .select("*")
-          .single();
-        if (error) throw error;
-        setVisitLog(data);
+        const data = await createVisitLogForAppointment({
+          appointment_id: appointment.id,
+          patient_id: appointment.patient_id,
+          visit_date: dateStr,
+          notes: visitNotes,
+        });
+        setVisitLog(data as VisitLog);
       }
       toast.success("הערות הטיפול נשמרו");
     } catch {
@@ -376,21 +351,11 @@ export function AppointmentDetail({
     setUploading(true);
     try {
       for (const file of Array.from(fileList)) {
-        const safe = file.name.replace(/[^\w.\-]/g, "_");
-        const path = `${appointment.patient_id}/${appointment.id}/${Date.now()}_${safe}`;
-        const { error: upErr } = await supabase.storage
-          .from(FILES_BUCKET)
-          .upload(path, file, { contentType: file.type || undefined });
-        if (upErr) throw upErr;
-        const { error: insErr } = await supabase.from("appointment_files").insert({
-          appointment_id: appointment.id,
-          patient_id: appointment.patient_id,
-          storage_path: path,
-          file_name: file.name,
-          mime_type: file.type || null,
-          size_bytes: file.size,
-        });
-        if (insErr) throw insErr;
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("appointmentId", appointment.id);
+        formData.append("patientId", appointment.patient_id);
+        await uploadAppointmentFile(formData);
       }
       toast.success("הקובץ הועלה");
       await loadFiles();
@@ -406,8 +371,7 @@ export function AppointmentDetail({
   async function handleDeleteFile(f: AppFile) {
     if (!confirm("למחוק את הקובץ?")) return;
     try {
-      await supabase.storage.from(FILES_BUCKET).remove([f.storage_path]);
-      await supabase.from("appointment_files").delete().eq("id", f.id);
+      await deleteAppointmentFile(f.id);
       setFiles((prev) => prev.filter((x) => x.id !== f.id));
       toast.success("הקובץ נמחק");
     } catch {

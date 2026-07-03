@@ -36,12 +36,12 @@ import {
   Trash2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { createClient } from "@/lib/supabase/client";
 import { updateAppointmentStatus, deleteAppointment, updateAppointmentPrice } from "@/app/dashboard/calendar/actions";
+import { updateVisitNotes } from "../actions";
 import { toast } from "sonner";
 import { formatPhoneDisplay } from "@/lib/phone";
 
-interface Patient {
+export interface Patient {
   id: string;
   full_name: string;
   phone: string;
@@ -53,7 +53,7 @@ interface Patient {
   created_at: string;
 }
 
-interface Visit {
+export interface Visit {
   id: string;
   visit_date: string;
   notes: string | null;
@@ -61,7 +61,7 @@ interface Visit {
   appointments: any;
 }
 
-interface Appointment {
+export interface Appointment {
   id: string;
   starts_at: string;
   ends_at: string;
@@ -71,7 +71,7 @@ interface Appointment {
   treatment_types: any;
 }
 
-interface Invoice {
+export interface Invoice {
   id: string;
   invoice_number: number;
   amount: number;
@@ -118,7 +118,6 @@ export function PatientProfile({
   invoices: Invoice[];
 }) {
   const router = useRouter();
-  const supabase = createClient();
   const [visits, setVisits] = useState(initialVisits);
   const [patientAppointments, setPatientAppointments] = useState(appointments);
   const [editingPriceId, setEditingPriceId] = useState<string | null>(null);
@@ -192,11 +191,7 @@ export function PatientProfile({
   async function saveEdit(visitId: string) {
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from("visit_logs")
-        .update({ notes: editNotes })
-        .eq("id", visitId);
-      if (error) throw error;
+      await updateVisitNotes(visitId, editNotes);
 
       // Update local state
       setVisits((prev) =>

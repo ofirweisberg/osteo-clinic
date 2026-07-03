@@ -1,18 +1,17 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { query, queryOne } from "@/lib/db";
+import { getSession } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { normalizePhone } from "@/lib/phone";
 
 export async function updatePracticeSettings(formData: FormData) {
-  const supabase = await createClient();
+  if (!(await getSession())) throw new Error("unauthorized");
 
   // Get the single settings row ID first
-  const { data: existing } = await supabase
-    .from("practice_settings")
-    .select("id")
-    .limit(1)
-    .single();
+  const existing = await queryOne<{ id: string }>(
+    "SELECT id FROM practice_settings LIMIT 1"
+  );
 
   if (!existing) throw new Error("Settings row not found");
 
@@ -38,72 +37,78 @@ export async function updatePracticeSettings(formData: FormData) {
     };
   }
 
-  const { error } = await supabase
-    .from("practice_settings")
-    .update({
-      practice_name: formData.get("practice_name") as string,
-      practitioner_name: formData.get("practitioner_name") as string,
-      phone: normalizePhone(formData.get("phone") as string),
-      address: formData.get("address") as string,
-      working_hours: workingHours,
-      booking_window_days: parseInt(
-        formData.get("booking_window_days") as string
-      ),
-      reminder_hours_before: parseInt(
-        formData.get("reminder_hours_before") as string
-      ),
-    })
-    .eq("id", existing.id);
+  await query(
+    `UPDATE practice_settings
+     SET practice_name = $1,
+         practitioner_name = $2,
+         phone = $3,
+         address = $4,
+         working_hours = $5::jsonb,
+         booking_window_days = $6,
+         reminder_hours_before = $7
+     WHERE id = $8`,
+    [
+      formData.get("practice_name") as string,
+      formData.get("practitioner_name") as string,
+      normalizePhone(formData.get("phone") as string),
+      formData.get("address") as string,
+      JSON.stringify(workingHours),
+      parseInt(formData.get("booking_window_days") as string),
+      parseInt(formData.get("reminder_hours_before") as string),
+      existing.id,
+    ]
+  );
 
-  if (error) throw error;
   revalidatePath("/dashboard/settings");
 }
 
 export async function createTreatmentType(formData: FormData) {
-  const supabase = await createClient();
+  if (!(await getSession())) throw new Error("unauthorized");
 
-  const { error } = await supabase.from("treatment_types").insert({
-    name: formData.get("name") as string,
-    duration_minutes: parseInt(formData.get("duration_minutes") as string),
-    price: parseFloat(formData.get("price") as string),
-    color: (formData.get("color") as string) || "#6366f1",
-  });
-  if (error) throw error;
+  await query(
+    `INSERT INTO treatment_types (name, duration_minutes, price, color)
+     VALUES ($1, $2, $3, $4)`,
+    [
+      formData.get("name") as string,
+      parseInt(formData.get("duration_minutes") as string),
+      parseFloat(formData.get("price") as string),
+      (formData.get("color") as string) || "#6366f1",
+    ]
+  );
   revalidatePath("/dashboard/settings");
 }
 
 export async function updateTreatmentType(id: string, formData: FormData) {
-  const supabase = await createClient();
+  if (!(await getSession())) throw new Error("unauthorized");
 
-  const { error } = await supabase
-    .from("treatment_types")
-    .update({
-      name: formData.get("name") as string,
-      duration_minutes: parseInt(formData.get("duration_minutes") as string),
-      price: parseFloat(formData.get("price") as string),
-      color: (formData.get("color") as string) || "#6366f1",
-    })
-    .eq("id", id);
-  if (error) throw error;
+  await query(
+    `UPDATE treatment_types
+     SET name = $1, duration_minutes = $2, price = $3, color = $4
+     WHERE id = $5`,
+    [
+      formData.get("name") as string,
+      parseInt(formData.get("duration_minutes") as string),
+      parseFloat(formData.get("price") as string),
+      (formData.get("color") as string) || "#6366f1",
+      id,
+    ]
+  );
   revalidatePath("/dashboard/settings");
 }
 
 export async function deleteTreatmentType(id: string) {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("treatment_types")
-    .delete()
-    .eq("id", id);
-  if (error) throw error;
+  if (!(await getSession())) throw new Error("unauthorized");
+
+  await query("DELETE FROM treatment_types WHERE id = $1", [id]);
   revalidatePath("/dashboard/settings");
 }
 
 export async function toggleTreatmentType(id: string, isActive: boolean) {
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("treatment_types")
-    .update({ is_active: isActive })
-    .eq("id", id);
-  if (error) throw error;
+  if (!(await getSession())) throw new Error("unauthorized");
+
+  await query("UPDATE treatment_types SET is_active = $1 WHERE id = $2", [
+    isActive,
+    id,
+  ]);
   revalidatePath("/dashboard/settings");
 }

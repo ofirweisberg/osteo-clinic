@@ -13,8 +13,12 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Check } from "lucide-react";
-import { createAppointment } from "./actions";
-import { createClient } from "@/lib/supabase/client";
+import {
+  createAppointment,
+  createPatientQuick,
+  findConflictingAppointments,
+} from "./actions";
+import { getScheduleBlocks } from "./block-actions";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { normalizePhone } from "@/lib/phone";
@@ -132,17 +136,10 @@ export function AppointmentDialog({
       }
 
       try {
-        const supabase = createClient();
-        const { data: newPatient, error } = await supabase
-          .from("patients")
-          .insert({
-            full_name: newPatientName.trim(),
-            phone: normalizePhone(newPatientPhone),
-          })
-          .select("id")
-          .single();
-
-        if (error) throw error;
+        const newPatient = await createPatientQuick(
+          newPatientName.trim(),
+          normalizePhone(newPatientPhone)
+        );
         finalPatientId = newPatient.id;
       } catch {
         toast.error("שגיאה ביצירת מטופל חדש");
@@ -178,13 +175,10 @@ export function AppointmentDialog({
       const checkStart = new Date(startsAt.getTime() - GAP_MS);
       const checkEnd = new Date(endsAt.getTime() + GAP_MS);
 
-      const supabase = createClient();
-      const { data: conflicts } = await supabase
-        .from("appointments")
-        .select("id, starts_at, ends_at")
-        .neq("status", "cancelled")
-        .lt("starts_at", checkEnd.toISOString())
-        .gt("ends_at", checkStart.toISOString());
+      const conflicts = await findConflictingAppointments(
+        checkStart.toISOString(),
+        checkEnd.toISOString()
+      );
 
       if (conflicts && conflicts.length > 0) {
         toast.error("יש תור חופף בטווח הזמן הזה (כולל 15 דקות הפרש)");
@@ -193,9 +187,7 @@ export function AppointmentDialog({
       }
 
       // Check for schedule blocks
-      const { data: blockConflicts } = await supabase
-        .from("schedule_blocks")
-        .select("*");
+      const blockConflicts = await getScheduleBlocks();
 
       const dayOfWeek = startsAt.getDay();
       const hasBlockConflict = (blockConflicts ?? []).some((block: { block_type: string; starts_at: string | null; ends_at: string | null; day_of_week: number | null; start_time: string | null; end_time: string | null }) => {

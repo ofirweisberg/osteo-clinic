@@ -1,6 +1,7 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { query } from "@/lib/db";
+import { getSession } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 
 export async function createInvoice(data: {
@@ -9,35 +10,40 @@ export async function createInvoice(data: {
   amount: number;
   notes?: string;
 }) {
-  const supabase = await createClient();
-  const { error } = await supabase.from("invoices").insert({
-    patient_id: data.patient_id,
-    appointment_id: data.appointment_id || null,
-    amount: data.amount,
-    notes: data.notes || null,
-    status: "draft",
-  });
-  if (error) throw error;
+  if (!(await getSession())) throw new Error("unauthorized");
+
+  // invoice_number is SERIAL — assigned by the DB, never supplied here.
+  await query(
+    `INSERT INTO invoices (patient_id, appointment_id, amount, notes, status)
+     VALUES ($1, $2, $3, $4, 'draft')`,
+    [
+      data.patient_id,
+      data.appointment_id || null,
+      data.amount,
+      data.notes || null,
+    ]
+  );
   revalidatePath("/dashboard/invoices");
 }
 
 export async function updateInvoiceStatus(id: string, status: string) {
-  const supabase = await createClient();
-  const update: Record<string, unknown> = { status };
+  if (!(await getSession())) throw new Error("unauthorized");
+
   if (status === "paid") {
-    update.paid_at = new Date().toISOString().split("T")[0];
+    const paidAt = new Date().toISOString().split("T")[0];
+    await query(
+      `UPDATE invoices SET status = $2, paid_at = $3 WHERE id = $1`,
+      [id, status, paidAt]
+    );
+  } else {
+    await query(`UPDATE invoices SET status = $2 WHERE id = $1`, [id, status]);
   }
-  const { error } = await supabase
-    .from("invoices")
-    .update(update)
-    .eq("id", id);
-  if (error) throw error;
   revalidatePath("/dashboard/invoices");
 }
 
 export async function deleteInvoice(id: string) {
-  const supabase = await createClient();
-  const { error } = await supabase.from("invoices").delete().eq("id", id);
-  if (error) throw error;
+  if (!(await getSession())) throw new Error("unauthorized");
+
+  await query(`DELETE FROM invoices WHERE id = $1`, [id]);
   revalidatePath("/dashboard/invoices");
 }

@@ -1,14 +1,20 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { query, queryOne } from "@/lib/db";
 import { sendWhatsAppMessage } from "@/lib/whatsapp/client";
 import { appointmentReminderMessage } from "@/lib/whatsapp/messages";
 
-// Use service role key for cron jobs (bypasses RLS)
-function getServiceClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+interface ReminderSettings {
+  reminder_hours_before: number;
+  practice_name: string;
+  address: string;
+}
+
+interface ReminderAppointment {
+  id: string;
+  starts_at: string;
+  patient_name: string;
+  patient_phone: string | null;
+  treatment_name: string | null;
 }
 
 /**
@@ -28,13 +34,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supabase = getServiceClient();
-
   // Get practice settings for reminder window
-  const { data: settings } = await supabase
-    .from("practice_settings")
-    .select("reminder_hours_before, practice_name, address")
-    .single();
+  let settings: ReminderSettings | null = null;
+  try {
+    settings = await queryOne<ReminderSettings>(
+      `SELECT reminder_hours_before, practice_name, address
+       FROM practice_settings
+       LIMIT 1`
+    );
+  } catch (err) {
+    console.error("Failed to fetch practice settings:", err);
+  }
 
   const reminderHours = settings?.reminder_hours_before ?? 24;
   const practiceName = settings?.practice_name ?? "המרפאה";
@@ -46,17 +56,24 @@ export async function GET(request: Request) {
   const windowEnd = new Date(now);
   windowEnd.setHours(windowEnd.getHours() + reminderHours);
 
-  const { data: appointments, error } = await supabase
-    .from("appointments")
-    .select(
-      "id, starts_at, reminder_sent, patients(full_name, phone), treatment_types(name)"
-    )
-    .in("status", ["pending", "confirmed"])
-    .eq("reminder_sent", false)
-    .gte("starts_at", windowStart.toISOString())
-    .lte("starts_at", windowEnd.toISOString());
-
-  if (error) {
+  let appointments: ReminderAppointment[];
+  try {
+    appointments = await query<ReminderAppointment>(
+      `SELECT a.id,
+              a.starts_at,
+              p.full_name AS patient_name,
+              p.phone AS patient_phone,
+              t.name AS treatment_name
+       FROM appointments a
+       JOIN patients p ON p.id = a.patient_id
+       LEFT JOIN treatment_types t ON t.id = a.treatment_type_id
+       WHERE a.status IN ('pending', 'confirmed')
+         AND a.reminder_sent = false
+         AND a.starts_at >= $1
+         AND a.starts_at <= $2`,
+      [windowStart.toISOString(), windowEnd.toISOString()]
+    );
+  } catch (error) {
     console.error("Failed to fetch appointments:", error);
     return NextResponse.json(
       { error: "Failed to fetch appointments" },
@@ -67,35 +84,38 @@ export async function GET(request: Request) {
   let sent = 0;
   let failed = 0;
 
-  for (const appt of appointments ?? []) {
-    const patient = Array.isArray(appt.patients)
-      ? appt.patients[0]
-      : appt.patients;
-    const treatment = Array.isArray(appt.treatment_types)
-      ? appt.treatment_types[0]
-      : appt.treatment_types;
-
-    if (!patient?.phone) continue;
+  for (const appt of appointments) {
+    if (!appt.patient_phone) continue;
 
     const message = appointmentReminderMessage({
-      patientName: patient.full_name,
-      treatmentName: treatment?.name ?? "טיפול",
+      patientName: appt.patient_name,
+      treatmentName: appt.treatment_name ?? "טיפול",
       startsAt: new Date(appt.starts_at),
       practiceName,
       practiceAddress,
     });
 
-    const result = await sendWhatsAppMessage(patient.phone, message);
+    const result = await sendWhatsAppMessage(appt.patient_phone, message);
 
     if (result.success) {
       // Mark as reminded
-      await supabase
-        .from("appointments")
-        .update({ reminder_sent: true })
-        .eq("id", appt.id);
+      try {
+        await query(
+          "UPDATE appointments SET reminder_sent = true WHERE id = $1",
+          [appt.id]
+        );
+      } catch (err) {
+        console.error(
+          `Failed to mark reminder_sent for appointment ${appt.id}:`,
+          err
+        );
+      }
       sent++;
     } else {
-      console.error(`Failed to send reminder for appointment ${appt.id}:`, result.error);
+      console.error(
+        `Failed to send reminder for appointment ${appt.id}:`,
+        result.error
+      );
       failed++;
     }
   }
@@ -103,7 +123,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     sent,
     failed,
-    total: (appointments ?? []).length,
+    total: appointments.length,
     timestamp: now.toISOString(),
   });
 }

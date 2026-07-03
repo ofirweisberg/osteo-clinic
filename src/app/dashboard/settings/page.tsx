@@ -1,17 +1,40 @@
-import { createClient } from "@/lib/supabase/server";
+import { query, queryOne } from "@/lib/db";
 import { SettingsForm } from "./settings-form";
 import { TreatmentTypes } from "./treatment-types";
 import { WhatsAppStatus } from "./whatsapp-status";
 
-export default async function SettingsPage() {
-  const supabase = await createClient();
+interface PracticeSettings {
+  id: string;
+  practice_name: string;
+  practitioner_name: string;
+  phone: string;
+  address: string;
+  working_hours: Record<
+    string,
+    { start: string; end: string; enabled: boolean }
+  >;
+  booking_window_days: number;
+  reminder_hours_before: number;
+  created_at: string;
+  updated_at: string;
+}
 
-  const [settingsRes, treatmentsRes] = await Promise.all([
-    supabase.from("practice_settings").select("*").single(),
-    supabase
-      .from("treatment_types")
-      .select("*")
-      .order("created_at", { ascending: true }),
+interface TreatmentType {
+  id: string;
+  name: string;
+  duration_minutes: number;
+  price: number;
+  color: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export default async function SettingsPage() {
+  const [settings, treatments] = await Promise.all([
+    queryOne<PracticeSettings>("SELECT * FROM practice_settings LIMIT 1"),
+    query<TreatmentType>(
+      "SELECT * FROM treatment_types ORDER BY created_at ASC"
+    ),
   ]);
 
   return (
@@ -19,8 +42,8 @@ export default async function SettingsPage() {
       <h2 className="text-2xl font-bold mb-6">הגדרות מרפאה</h2>
 
       <div className="flex flex-col gap-8">
-        <SettingsForm settings={settingsRes.data} />
-        <TreatmentTypes treatments={treatmentsRes.data ?? []} />
+        <SettingsForm settings={settings} />
+        <TreatmentTypes treatments={treatments ?? []} />
         <WhatsAppStatus />
       </div>
     </div>

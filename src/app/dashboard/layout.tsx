@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 
@@ -9,18 +9,15 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const session = await getSession();
 
-  if (!user) {
+  if (!session) {
     redirect("/login");
   }
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar userEmail={user.email ?? ""} />
+      <Sidebar userEmail={session.email} />
       <main className="flex-1 p-4 pt-18 md:p-6 bg-muted/30 overflow-auto">{children}</main>
     </div>
   );

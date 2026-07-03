@@ -1,6 +1,12 @@
-import { createClient } from "@/lib/supabase/server";
+import { query, queryOne } from "@/lib/db";
 import { notFound } from "next/navigation";
-import { PatientProfile } from "./patient-profile";
+import {
+  PatientProfile,
+  type Patient,
+  type Visit,
+  type Appointment,
+  type Invoice,
+} from "./patient-profile";
 
 export default async function PatientDetailPage({
   params,
@@ -8,38 +14,55 @@ export default async function PatientDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const supabase = await createClient();
 
-  const [patientRes, visitsRes, appointmentsRes, invoicesRes] =
-    await Promise.all([
-      supabase.from("patients").select("*").eq("id", id).single(),
-      supabase
-        .from("visit_logs")
-        .select(
-          "*, appointments(starts_at, treatment_types(name, color))"
-        )
-        .eq("patient_id", id)
-        .order("visit_date", { ascending: false }),
-      supabase
-        .from("appointments")
-        .select("*, treatment_types(name, color, duration_minutes, price)")
-        .eq("patient_id", id)
-        .order("starts_at", { ascending: false }),
-      supabase
-        .from("invoices")
-        .select("*")
-        .eq("patient_id", id)
-        .order("created_at", { ascending: false }),
-    ]);
+  const [patient, visits, appointments, invoices] = await Promise.all([
+    queryOne<Patient>(`SELECT * FROM patients WHERE id = $1`, [id]),
+    query<Visit>(
+      `SELECT v.*,
+              CASE WHEN a.id IS NULL THEN NULL ELSE json_build_object(
+                'starts_at', a.starts_at,
+                'treatment_types', CASE WHEN tt.id IS NULL THEN NULL ELSE json_build_object(
+                  'name', tt.name,
+                  'color', tt.color
+                ) END
+              ) END AS appointments
+       FROM visit_logs v
+       LEFT JOIN appointments a ON a.id = v.appointment_id
+       LEFT JOIN treatment_types tt ON tt.id = a.treatment_type_id
+       WHERE v.patient_id = $1
+       ORDER BY v.visit_date DESC`,
+      [id]
+    ),
+    query<Appointment>(
+      `SELECT a.*,
+              CASE WHEN tt.id IS NULL THEN NULL ELSE json_build_object(
+                'name', tt.name,
+                'color', tt.color,
+                'duration_minutes', tt.duration_minutes,
+                'price', tt.price
+              ) END AS treatment_types
+       FROM appointments a
+       LEFT JOIN treatment_types tt ON tt.id = a.treatment_type_id
+       WHERE a.patient_id = $1
+       ORDER BY a.starts_at DESC`,
+      [id]
+    ),
+    query<Invoice>(
+      `SELECT * FROM invoices
+       WHERE patient_id = $1
+       ORDER BY created_at DESC`,
+      [id]
+    ),
+  ]);
 
-  if (!patientRes.data) notFound();
+  if (!patient) notFound();
 
   return (
     <PatientProfile
-      patient={patientRes.data}
-      visits={visitsRes.data ?? []}
-      appointments={appointmentsRes.data ?? []}
-      invoices={invoicesRes.data ?? []}
+      patient={patient}
+      visits={visits ?? []}
+      appointments={appointments ?? []}
+      invoices={invoices ?? []}
     />
   );
 }

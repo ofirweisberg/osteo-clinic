@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { getSession } from "@/lib/auth";
+import { queryOne } from "@/lib/db";
 import { sendWhatsAppMessage } from "@/lib/whatsapp/client";
 import { bookingConfirmationMessage } from "@/lib/whatsapp/messages";
+
+interface ConfirmationAppointment {
+  starts_at: string;
+  patient_name: string;
+  patient_phone: string | null;
+  treatment_name: string | null;
+}
 
 /**
  * POST /api/whatsapp/send-confirmation
@@ -10,14 +18,10 @@ import { bookingConfirmationMessage } from "@/lib/whatsapp/messages";
  * Called after an appointment is created.
  */
 export async function POST(request: Request) {
-  const supabase = await createClient();
-
   // Verify the user is authenticated
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const session = await getSession();
 
-  if (!user) {
+  if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -32,15 +36,25 @@ export async function POST(request: Request) {
   }
 
   // Fetch appointment details
-  const { data: appointment, error } = await supabase
-    .from("appointments")
-    .select(
-      "starts_at, patients(full_name, phone), treatment_types(name)"
-    )
-    .eq("id", appointmentId)
-    .single();
+  let appointment: ConfirmationAppointment | null = null;
+  try {
+    appointment = await queryOne<ConfirmationAppointment>(
+      `SELECT a.starts_at,
+              p.full_name AS patient_name,
+              p.phone AS patient_phone,
+              t.name AS treatment_name
+       FROM appointments a
+       JOIN patients p ON p.id = a.patient_id
+       LEFT JOIN treatment_types t ON t.id = a.treatment_type_id
+       WHERE a.id = $1`,
+      [appointmentId]
+    );
+  } catch {
+    // Invalid UUID or query failure — treat as not found (matches previous behavior)
+    appointment = null;
+  }
 
-  if (error || !appointment) {
+  if (!appointment) {
     return NextResponse.json(
       { error: "Appointment not found" },
       { status: 404 }
@@ -48,19 +62,16 @@ export async function POST(request: Request) {
   }
 
   // Fetch practice settings
-  const { data: settings } = await supabase
-    .from("practice_settings")
-    .select("practice_name, address")
-    .single();
+  let settings: { practice_name: string; address: string } | null = null;
+  try {
+    settings = await queryOne<{ practice_name: string; address: string }>(
+      "SELECT practice_name, address FROM practice_settings LIMIT 1"
+    );
+  } catch (err) {
+    console.error("Failed to fetch practice settings:", err);
+  }
 
-  const patient = (Array.isArray(appointment.patients)
-    ? appointment.patients[0]
-    : appointment.patients) as { full_name: string; phone: string } | null;
-  const treatment = (Array.isArray(appointment.treatment_types)
-    ? appointment.treatment_types[0]
-    : appointment.treatment_types) as { name: string } | null;
-
-  if (!patient?.phone) {
+  if (!appointment.patient_phone) {
     return NextResponse.json(
       { error: "Patient phone not found" },
       { status: 400 }
@@ -68,20 +79,20 @@ export async function POST(request: Request) {
   }
 
   const message = bookingConfirmationMessage({
-    patientName: patient.full_name,
-    treatmentName: treatment?.name ?? "טיפול",
+    patientName: appointment.patient_name,
+    treatmentName: appointment.treatment_name ?? "טיפול",
     startsAt: new Date(appointment.starts_at),
     practiceName: settings?.practice_name ?? "המרפאה",
     practiceAddress: settings?.address,
   });
 
-  const result = await sendWhatsAppMessage(patient.phone, message);
+  const result = await sendWhatsAppMessage(
+    appointment.patient_phone,
+    message
+  );
 
   if (!result.success) {
-    return NextResponse.json(
-      { error: result.error },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: result.error }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });

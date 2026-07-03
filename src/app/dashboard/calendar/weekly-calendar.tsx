@@ -9,12 +9,19 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { createClient } from "@/lib/supabase/client";
 import { AppointmentDialog } from "./appointment-dialog";
 import { AppointmentDetail } from "./appointment-detail";
 import { BlockDialog } from "./block-dialog";
-import { deleteScheduleBlock, addBlockException } from "./block-actions";
-import { updateAppointmentStatus, deleteAppointment } from "./actions";
+import {
+  deleteScheduleBlock,
+  addBlockException,
+  getScheduleBlocks,
+} from "./block-actions";
+import {
+  updateAppointmentStatus,
+  deleteAppointment,
+  getWeekAppointments,
+} from "./actions";
 import { toast } from "sonner";
 
 const STATUS_OPTIONS = [
@@ -181,26 +188,22 @@ export function WeeklyCalendar({
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const supabase = createClient();
     const weekEnd = new Date(currentWeek);
     weekEnd.setDate(weekEnd.getDate() + 7);
 
-    const [apptRes, blocksRes] = await Promise.all([
-      supabase
-        .from("appointments")
-        .select(
-          "*, patients(id, full_name, phone), treatment_types(id, name, duration_minutes, price, color)"
-        )
-        .gte("starts_at", currentWeek.toISOString())
-        .lt("starts_at", weekEnd.toISOString())
-        .neq("status", "cancelled")
-        .order("starts_at"),
-      supabase.from("schedule_blocks").select("*"),
-    ]);
-
-    setAppointments((apptRes.data as Appointment[]) ?? []);
-    setBlocks((blocksRes.data as ScheduleBlock[]) ?? []);
-    setLoading(false);
+    try {
+      const [appts, blks] = await Promise.all([
+        getWeekAppointments(currentWeek.toISOString(), weekEnd.toISOString()),
+        getScheduleBlocks(),
+      ]);
+      setAppointments((appts as Appointment[]) ?? []);
+      setBlocks((blks as ScheduleBlock[]) ?? []);
+    } catch {
+      setAppointments([]);
+      setBlocks([]);
+    } finally {
+      setLoading(false);
+    }
   }, [currentWeek]);
 
   useEffect(() => {

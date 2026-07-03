@@ -126,8 +126,7 @@ export function WhatsAppStatus() {
             >
 {`GREENAPI_INSTANCE_ID=your-instance-id
 GREENAPI_API_TOKEN=your-api-token
-CRON_SECRET=your-random-secret
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key`}
+CRON_SECRET=your-random-secret`}
             </pre>
           </div>
         ) : (

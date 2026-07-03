@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
+import { query } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CalendarDays, Clock } from "lucide-react";
@@ -64,8 +64,6 @@ const one = <T,>(x: T | T[] | null): T | null =>
   Array.isArray(x) ? x[0] ?? null : x;
 
 export default async function DashboardPage() {
-  const supabase = await createClient();
-
   // Query a padded UTC window (±1 day) so appointments near the Israel-midnight
   // boundary are never missed regardless of DST; we group/display only the 7
   // target Israel dates below, so the padding rows fall away naturally.
@@ -75,16 +73,31 @@ export default async function DashboardPage() {
   const qEnd = new Date(now);
   qEnd.setUTCDate(qEnd.getUTCDate() + DAYS_AHEAD + 1);
 
-  const { data, error } = await supabase
-    .from("appointments")
-    .select(
-      "id, patient_id, starts_at, status, patients(id, full_name), treatment_types(name, duration_minutes, color)"
-    )
-    .gte("starts_at", qStart.toISOString())
-    .lte("starts_at", qEnd.toISOString())
-    .order("starts_at", { ascending: true });
-
-  const appointments = (data as Appointment[] | null) ?? [];
+  let appointments: Appointment[] = [];
+  let error = false;
+  try {
+    appointments = await query<Appointment>(
+      `SELECT a.id, a.patient_id, a.starts_at, a.status,
+              CASE WHEN p.id IS NULL THEN NULL
+                   ELSE json_build_object('id', p.id, 'full_name', p.full_name)
+              END AS patients,
+              CASE WHEN t.id IS NULL THEN NULL
+                   ELSE json_build_object(
+                     'name', t.name,
+                     'duration_minutes', t.duration_minutes,
+                     'color', t.color
+                   )
+              END AS treatment_types
+         FROM appointments a
+         LEFT JOIN patients p ON p.id = a.patient_id
+         LEFT JOIN treatment_types t ON t.id = a.treatment_type_id
+        WHERE a.starts_at >= $1 AND a.starts_at <= $2
+        ORDER BY a.starts_at ASC`,
+      [qStart.toISOString(), qEnd.toISOString()]
+    );
+  } catch {
+    error = true;
+  }
 
   // Group by Israel-local date key.
   const byDay = new Map<string, Appointment[]>();
